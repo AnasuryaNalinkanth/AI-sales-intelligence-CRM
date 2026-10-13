@@ -1,99 +1,270 @@
-# AI Sales CRM
+<div align="center">
 
-A FastAPI sales CRM with SQLAlchemy-backed customer and activity workflows,
-a vanilla HTML/CSS/JavaScript interface, and a read-only LangChain assistant.
+# SalesDesk
 
-## Requirements
+**AI Sales Intelligence & CRM System**
 
-- Python 3.10+
-- `pip`
+_The assistant reads everything. It writes nothing you haven't approved._
 
-## Setup
+![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![MySQL 8](https://img.shields.io/badge/MySQL-8-4479A1?logo=mysql&logoColor=white)
+![SQLAlchemy 2](https://img.shields.io/badge/SQLAlchemy-2-D71F00?logo=sqlalchemy&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-1C3C3C?logo=langchain&logoColor=white)
+![Gemini](https://img.shields.io/badge/Gemini-2.5_Flash-8E75B2?logo=googlegemini&logoColor=white)
+![Vanilla JS](https://img.shields.io/badge/Frontend-vanilla_JS-F7DF1E?logo=javascript&logoColor=black)
 
-Create and activate a virtual environment, then install the dependencies:
+</div>
+
+---
+
+Most CRMs store what happened. They don't tell you what to do next, and if they do, you can't
+see why.
+
+SalesDesk is a full-stack CRM for customers, enquiries, meetings, calls and follow-ups. It has
+a ranked list of recommended actions, and every recommendation shows the evidence behind it.
+It also has a Gemini-powered assistant that answers from your real CRM records. When the
+assistant wants to change something, it proposes the change and waits for a person to approve
+it.
+
+It is one FastAPI application backed by MySQL, with a plain HTML/CSS/JavaScript interface and no
+separate frontend build step.
+
+## What it does
+
+**Customer workspace.** Register a customer, their company, a primary contact and the first
+sales enquiry in one transaction. Search and page through customers, then open one to see
+contacts, enquiries and a filterable timeline of every meeting, call and follow-up.
+
+**Shared scheduling.** Meetings, scheduled calls and active follow-ups share one calendar per
+workspace. New bookings are checked for conflicts, alternative slots within business hours are
+suggested, and times are shown in the user's timezone. Details are in
+[docs/scheduling.md](docs/scheduling.md).
+
+**Recommended actions.** The analytics page ranks what needs attention: overdue follow-ups,
+stalled deals, neglected leads and customers with no next step. Fixed rules produce the
+ranking, not the language model. Every item carries a 0–100 priority score, its evidence (each
+point marked _fact_, _estimate_ or _missing data_), and links to the exact enquiry, follow-up or
+meeting.
+
+**Analytics.** KPIs, distributions, pipeline value by stage, activity trends and follow-up due
+windows. Database queries calculate every number; the model never does arithmetic.
+
+**AI assistant.** Ask about a customer, prepare for a meeting, or ask what to focus on. You can
+also generate a customer summary or a meeting brief on demand.
+
+**Approvals (human in the loop).** When the assistant proposes a meeting, a follow-up, a
+scheduled call, a call result, a completed follow-up or a field enrichment, the proposal waits
+on the customer page with **Confirm** and **Cancel** buttons. Administrators can set each action
+type to `approval_required` (the default), `automatic` or `disabled`, and every policy change is
+audited.
+
+**Excel import.** Upload a `.xlsx` workbook with `Companies`, `Customers`, `Contacts`,
+`Sales_Enquiries`, `Meetings`, `Calls`, `Follow_Ups` and `TEST_EXPECTATIONS` sheets. Sheets,
+columns and cross-references are validated first, and the whole import runs in one transaction,
+so a failure rolls everything back.
+
+**Google Calendar sync (optional).** Each user can connect their own Google Calendar from
+Settings. CRM activities are then mirrored as calendar events, and failed syncs can be retried.
+The integration stays off until it is configured.
+
+**Organisation isolation.** Every CRM record belongs to an organisation. Services filter by the
+signed-in user's organisation; records in another organisation return `404`. Composite foreign
+keys and a session-level guard also stop records from referencing another organisation's data.
+
+## How it works
+
+```mermaid
+flowchart LR
+    UI["Browser<br/>HTML · CSS · JS"] -->|JWT| API["FastAPI routes"]
+    API --> SVC["Services<br/>validation · org scoping · transactions"]
+    SVC --> DB[("MySQL<br/>SQLAlchemy + Alembic")]
+    API --> AG["LangGraph agent<br/>Gemini"]
+    AG -->|read tools| SVC
+    AG -->|proposals| HITL["Approval queue"]
+    HITL -->|on confirm| SVC
+    SVC -.->|optional| GC["Google Calendar"]
+```
+
+The application has three layers. **Routes** handle HTTP and authentication. **Services** hold
+the business rules: validation, organisation scoping, scheduling conflicts and transactions.
+**Models** map to MySQL, and Alembic migrations manage the schema; the app never calls
+`create_all`.
+
+The browser and the assistant use the same services. When the assistant reads a customer, it
+uses the same code that serves the customer page.
+
+### The assistant, in plain terms
+
+The assistant is a LangGraph agent running Gemini. It cannot query the database directly; it
+can only call a fixed set of tools:
+
+| Kind | Tools |
+| --- | --- |
+| Read | `find_customer`, `get_customer_profile`, `get_sales_enquiries`, `get_customer_meetings`, `get_customer_calls`, `get_customer_followups`, `get_customer_activity`, `get_sales_analytics`, `get_proactive_insights`, `analyze_crm_activity` |
+| Propose | `create_meeting`, `create_followup`, `schedule_call`, `record_call_result`, `complete_followup`, `apply_enrichment` |
+
+Some rules hold for every conversation:
+
+- **Grounded answers.** The assistant answers from tool results. For "what should I focus
+  on?" it must call `get_proactive_insights` rather than rank records itself. It cites record
+  IDs, and it says when evidence is only an estimate or data is missing.
+- **Writes are proposals.** A proposal tool validates the request and stores a pending action.
+  Nothing changes in the CRM until a person confirms it, unless an administrator has set that
+  action type to `automatic`.
+- **Scoped.** On a customer page, the tools refuse records belonging to other customers. A
+  proposal can only reference records the assistant has already looked up.
+- **Bounded.** AI routes are rate-limited per user, tool loops have a recursion limit, and
+  pending proposals expire after `AGENT_ACTION_TTL_SECONDS`.
+- **Optional.** Without a `GEMINI_API_KEY`, the rest of the CRM works normally. AI endpoints
+  return `503 llm_not_configured`.
+
+## Quick start (Windows PowerShell)
+
+**Requirements:** Python 3.11 and MySQL 8.
 
 ```powershell
+git clone <your-fork-url> salesdesk
+cd salesdesk
+
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+
+Copy-Item .env.example .env   # then edit .env (see Configuration)
 ```
 
-Copy `.env.example` to `.env` and set environment variables as needed. The
-configuration supports `APP_NAME`, `ENVIRONMENT`, `API_PREFIX`,
-`CORS_ALLOWED_ORIGINS`, database settings, and optional `GEMINI_API_KEY` and
-`GEMINI_MODEL` settings. Gemini 2.5 Flash is the default model. Do not commit
-real credentials.
+Create an empty database and an application account in MySQL:
 
-## Run
+```sql
+CREATE DATABASE ai_sales_crm CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE USER 'crm_app'@'localhost' IDENTIFIED BY '<strong password>';
+GRANT ALL PRIVILEGES ON ai_sales_crm.* TO 'crm_app'@'localhost';
+```
 
-From the project root:
+Apply the migrations, then start the server:
 
 ```powershell
-uvicorn app.main:app --reload
+python -m alembic upgrade head
+python -m uvicorn app.main:app --reload
 ```
 
-The service is available at `http://127.0.0.1:8000`. Verify it with
-`GET /health`, which returns:
+Open <http://127.0.0.1:8000>. To check the server, use `GET /health`. To check the database
+connection too, use `GET /health/ready`. Interactive API docs are at `/docs` when
+`ENVIRONMENT` is not `production`.
 
-```json
-{
-  "status": "ok"
-}
+### Create the first user
+
+There is no signup flow yet (see [Limitations](#limitations)), so the first account is created
+directly in the database. First generate a password hash:
+
+```powershell
+python -c "from getpass import getpass; from app.core.security import hash_password; print(hash_password(getpass()))"
 ```
 
-FastAPI's interactive API documentation is available at `/docs`. API module
-test routes are available under `/api/{module}/test` for customers, enquiries,
-contacts, meetings, calls, followups, analytics, and agent.
+Then insert the user into the default workspace, which the migrations create:
 
-## Project status
+```sql
+INSERT INTO users (email, full_name, password_hash, role, is_active, organization_id)
+SELECT 'admin@example.com', 'Admin', '<hash from above>', 'admin', 1, organization_id
+FROM organizations WHERE slug = 'default-workspace';
+```
 
-This repository provides the FastAPI backend, SQLAlchemy database foundation
-and migration, customer registration and retrieval, customer activity
-workflows, and a read-only LangChain sales assistant. The customer
-intelligence interface is served by the same FastAPI application.
+Sign in at `/login`. Use `role = 'sales'` for everyone who doesn't need to change approval
+policies.
 
-## Database setup and migrations
+## Configuration
 
-1. Create the database manually in MySQL if it does not already exist.
-2. Set `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` in your
-   local `.env` file. Do not commit that file.
-3. Apply the checked-in schema migration from the project root:
+All settings come from environment variables or `.env`, and environment variables take
+precedence. [.env.example](.env.example) lists them all. These are the main ones:
 
-   ```powershell
-   alembic upgrade head
-   ```
+| Variable | Purpose |
+| --- | --- |
+| `ENVIRONMENT` | `production` turns on the strict checks under [Security](#security) and hides `/docs` |
+| `DB_HOST` `DB_PORT` `DB_NAME` `DB_USER` `DB_PASSWORD` | MySQL connection |
+| `JWT_SECRET_KEY` | Token signing key; must be at least 32 characters in production |
+| `CORS_ALLOWED_ORIGINS` | Explicit list of allowed origins |
+| `GEMINI_API_KEY` `GEMINI_MODEL` | Enable the assistant (default model `gemini-2.5-flash`) |
+| `AGENT_ACTION_TTL_SECONDS` | Lifetime of a pending proposal (30–3600 seconds, default 300) |
+| `ALLOW_PUBLIC_REGISTRATION` | Keep `false` until signup creates organisations |
+| `GOOGLE_CLIENT_ID` `GOOGLE_CLIENT_SECRET` `GOOGLE_REDIRECT_URI` `GOOGLE_TOKEN_ENCRYPTION_KEY` | Google Calendar sync; enabled only when all four are set and the key is a valid Fernet key |
+| `SCHEDULING_*` | Business hours, slot increments, default durations and the suggestion window |
 
-   To inspect generated SQL without connecting to MySQL:
+To generate a Fernet key for `GOOGLE_TOKEN_ENCRYPTION_KEY`:
 
-   ```powershell
-   alembic upgrade head --sql
-   ```
+```powershell
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
 
-Application startup does not open a database connection. Database access is
-opened on demand through `get_db()`; `check_database_connection()` is an
-explicit connectivity check. Alembic migrations, rather than
-`Base.metadata.create_all()`, manage the schema.
+> In PowerShell, `$env:NAME = ""` **removes** the variable instead of blanking it, so the value
+> in `.env` applies again. To override a setting for one session, set a real value.
 
-Run the local, database-independent test suite with:
+## Migrations
+
+```powershell
+python -m alembic current       # show the applied revision
+python -m alembic upgrade head  # apply pending migrations
+```
+
+Migration `20261013_0013` adds organisation scoping to existing data. Before running it against
+a database that holds real data, follow [docs/migration_0013_runbook.md](docs/migration_0013_runbook.md).
+It covers the backup, a rehearsal on a restored copy, preflight checks, interruption recovery
+and rollback. The migration is resumable, refuses offline `--sql` mode, and stops if any row
+count changes.
+
+## Tests
 
 ```powershell
 python -m pytest -q
 ```
 
-Company and customer deletion are restricted while related rows exist. CRM
-relationships do not configure ORM delete cascades. Optional references from
-meetings, calls, and follow-ups use `ON DELETE SET NULL`, retaining their
-historical records if a referenced optional contact, enquiry, meeting, or call
-is deleted.
+By default the suite uses in-memory SQLite and mocked chat models, so it touches neither your
+MySQL database nor Gemini. The MySQL-specific tests for migrations and scheduling locks are
+skipped unless you point them at a **disposable** schema:
 
+```powershell
+$env:MYSQL_TEST_URL = "mysql+pymysql://<user>:<password>@127.0.0.1:3306/ai_sales_crm_test"
+python -m pytest -q tests/test_organization_migration.py tests/test_scheduling_mysql.py
+```
 
-## Customer registration API
+These tests drop every table in that schema and refuse to run against any schema not named
+`ai_sales_crm_test`.
 
-`POST /api/customers` registers a company (reusing a case-insensitive,
-trimmed-name match when present), customer, primary contact, and initial sales
-enquiry in a single transaction. The request groups those data as
-`customer_name`, `status`, and `sales_stage`, plus `company`,
-`primary_contact`, and `sales_enquiry` objects. For example:
+## API reference
+
+All endpoints are under `/api` and require a bearer token, except `/api/auth/*` and the Google
+OAuth callback. Interactive documentation is at `/docs`.
+
+<details>
+<summary><b>Auth</b></summary>
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/auth/login` | Exchange email and password for a JWT |
+| `GET` | `/api/auth/me` | Current user |
+| `POST` | `/api/auth/register` | Self-registration (disabled by `ALLOW_PUBLIC_REGISTRATION=false`) |
+
+</details>
+
+<details>
+<summary><b>Customers, contacts and enquiries</b></summary>
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/customers` | Register customer, company, primary contact and first enquiry together |
+| `GET` | `/api/customers` | List customers: `search`, `customer_name`, `company_name`, `page`, `page_size` (≤ 100) |
+| `GET` `PUT` `PATCH` | `/api/customers/{customer_id}` | Read or update a customer |
+| `GET` | `/api/customers/{customer_id}/overview` | Profile with all activity |
+| `GET` | `/api/customers/{customer_id}/activity` | Timeline: `type`, `start_date`, `end_date` (inclusive) |
+| `POST` | `/api/contacts` | Add a contact |
+| `GET` `PUT` `PATCH` | `/api/contacts/{contact_id}` | Read or update a contact |
+| `GET` | `/api/customers/{customer_id}/contacts` | A customer's contacts |
+| `POST` | `/api/enquiries` | Add a sales enquiry |
+| `GET` `PUT` `PATCH` | `/api/enquiries/{enquiry_id}` | Read or update an enquiry |
+| `GET` | `/api/customers/{customer_id}/enquiries` | A customer's enquiries |
+| `POST` | `/api/import` | Import a `.xlsx` workbook |
+
+Example registration body:
 
 ```json
 {
@@ -111,123 +282,132 @@ enquiry in a single transaction. The request groups those data as
 }
 ```
 
-Allowed customer statuses are `active`, `inactive`, and `prospect`; sales
-stages are `new`, `qualified`, `proposal`, `negotiation`, `won`, and `lost`;
-enquiry priorities are `low`, `medium`, `normal`, `high`, and `urgent`; enquiry statuses
-are `open`, `in_progress`, `converted`, `closed`, and `lost`.
-If omitted, customer status/sales stage default to `active`/`new`, and enquiry
-priority/status default to `normal`/`open`; product, estimated value, and
-non-required company/contact details remain optional.
+</details>
 
-Customer retrieval is available at `GET /api/customers/{customer_id}`. List
-customers with `GET /api/customers?page=1&page_size=20`; `search` searches
-customer and company names, while `customer_name` and `company_name` filter
-those fields individually. `page_size` is limited to 100.
-
-Customer API tests use an isolated in-memory SQLite database and do not access
-the configured MySQL database.
-
-## Customer activity API
-
-Meetings, calls, and follow-ups are created and updated through services that
-validate the customer and any optional contact, enquiry, meeting, or call
-references. Each write is performed in a single SQLAlchemy transaction.
+<details>
+<summary><b>Meetings, calls, follow-ups and scheduling</b></summary>
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | `POST` | `/api/meetings` | Schedule a meeting |
-| `GET` | `/api/meetings/{meeting_id}` | Retrieve a meeting |
-| `PUT` | `/api/meetings/{meeting_id}` | Update a meeting |
-| `GET` | `/api/customers/{customer_id}/meetings` | List a customer's meetings |
-| `POST` | `/api/calls` | Log a call |
-| `GET` | `/api/calls/{call_id}` | Retrieve a call |
-| `PUT` | `/api/calls/{call_id}` | Update a call |
-| `GET` | `/api/customers/{customer_id}/calls` | List a customer's calls |
+| `GET` `PUT` | `/api/meetings/{meeting_id}` | Read or update a meeting |
+| `GET` | `/api/customers/{customer_id}/meetings` | A customer's meetings |
+| `POST` | `/api/calls` | Log or schedule a call |
+| `GET` `PUT` | `/api/calls/{call_id}` | Read or update a call |
+| `GET` | `/api/customers/{customer_id}/calls` | A customer's calls |
 | `POST` | `/api/followups` | Create a follow-up |
-| `GET` | `/api/followups/{followup_id}` | Retrieve a follow-up |
-| `PUT` | `/api/followups/{followup_id}` | Update a follow-up |
-| `GET` | `/api/customers/{customer_id}/followups` | List a customer's follow-ups |
-| `GET` | `/api/customers/{customer_id}/activity` | Get the combined timeline |
-| `GET` | `/api/customers/{customer_id}/overview` | Get the customer and activity overview |
+| `GET` `PUT` | `/api/followups/{followup_id}` | Read or update a follow-up |
+| `GET` | `/api/customers/{customer_id}/followups` | A customer's follow-ups |
+| `GET` | `/api/scheduling/activities` | Everything on the shared calendar |
+| `POST` | `/api/scheduling/availability` | Check a slot and get alternatives |
+| `POST` | `/api/scheduling/activities/{activity_type}/{record_id}/move` | Move an activity to another date |
 
-The activity endpoint accepts optional `type` (`enquiry`, `meeting`, `call`,
-or `follow_up`), `start_date`, and `end_date` query parameters. Date bounds
-are inclusive; a start date after the end date returns a validation error.
-Meeting statuses are `scheduled`, `completed`, `cancelled`, and `no_show`;
-call statuses are `scheduled`, `attempted`, `completed`, `failed`, `cancelled`,
-and `missed`; follow-up statuses are `pending`, `in_progress`, `completed`,
-`cancelled`, and `overdue`.
+</details>
 
-## Frontend
-
-The vanilla HTML/CSS/JavaScript interface is served by FastAPI at `/`,
-`/customer-registration`, and `/customer`. Frontend assets are served under
-`/static/`. Open the UI through the same origin as FastAPI, for example
-`http://127.0.0.1:8000/`; no separate frontend server is required.
-
-The registration, customer intelligence, and analytics pages use same-origin
-FastAPI APIs. The UI includes registration, search, pagination,
-customer/company/contact/enquiry details, activity creation, follow-up
-completion, a filterable activity timeline, and the AI assistant's explicit
-action confirmation flow. The analytics dashboard presents structured
-database-calculated customer, enquiry, pipeline, activity, and follow-up
-metrics. Authentication remains deferred.
-
-## Sales analytics
-
-The analytics endpoints use SQLAlchemy aggregates over the CRM tables and do
-not ask the LLM to calculate metrics:
+<details>
+<summary><b>Analytics and recommendations</b></summary>
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/analytics/overview` | Customer, enquiry, monthly activity, and follow-up KPIs |
-| `GET` | `/api/analytics/customers` | Status/stage/industry distributions and customer creation trend |
-| `GET` | `/api/analytics/enquiries` | Status/priority/product distributions, value, and enquiry trend |
-| `GET` | `/api/analytics/activities` | Meeting/call/follow-up trend and status distributions |
-| `GET` | `/api/analytics/pipeline` | Enquiry count and estimated value grouped by the customer's recorded sales stage |
-| `GET` | `/api/analytics/followups` | Pending/completed/overdue/cancelled counts and due windows |
+| `GET` | `/api/analytics/overview` | Headline KPIs |
+| `GET` | `/api/analytics/customers` | Status, stage and industry distributions; creation trend |
+| `GET` | `/api/analytics/enquiries` | Status, priority and product distributions; value; trend |
+| `GET` | `/api/analytics/activities` | Activity trend and status distributions |
+| `GET` | `/api/analytics/pipeline` | Enquiry count and value by sales stage |
+| `GET` | `/api/analytics/followups` | Follow-up states and due windows |
+| `GET` | `/api/analytics/attention` | Dashboard "Needs attention" queue |
+| `GET` | `/api/analytics/proactive-insights` | Ranked recommendations: `category`, `urgency`, `min_score`, `customer_id`, `page`, `page_size` |
 
-All endpoints accept optional inclusive `start_date` and `end_date` query
-parameters. The customer, enquiry, and activity endpoints also accept
-`grain=daily`, `weekly`, or `monthly` (default `monthly`). Follow-up due
-windows use the application server's UTC date. Active customer totals are
-current status counts; date filters apply to record creation or activity dates,
-not to historical status snapshots.
+Metric endpoints accept inclusive `start_date` and `end_date` parameters. The customers,
+enquiries and activities endpoints also take `grain` (`daily`, `weekly` or `monthly`).
 
-Enquiry-to-meeting conversion is based on distinct enquiries with a linked
-meeting. The schema does not retain a proposal outcome per meeting, so
-meeting-to-proposal conversion is returned unavailable. The won/lost rate uses
-the existing customer sales stages and is unavailable if there are no won/lost
-customers in the selected period.
+**How a recommendation is scored.** Urgency combines overdue time, inactivity and an imminent
+meeting. Impact combines enquiry priority, sales stage and estimated value. The priority score
+is 60% urgency plus 40% impact, with up to 15 bonus points for multiple signals, capped at 100.
+A score of 60 or more is _high_, and 30 or more is _medium_. All thresholds are in the `RULES`
+dictionary in
+[app/services/proactive_insights_service.py](app/services/proactive_insights_service.py).
 
-## CRM assistant
+</details>
 
-`POST /api/agent/chat` accepts a message and an optional customer ID. The
-assistant uses controlled CRM service-backed tools to find customers and read
-customer profiles, enquiries, meetings, calls, follow-ups, and activity.
-Responses include tool names, safe input summaries, and success status. Read
-operations use controlled CRM services; the model does not execute SQL.
+<details>
+<summary><b>Assistant and approvals</b></summary>
 
-Set `GEMINI_API_KEY` and optionally `GEMINI_MODEL` to enable requests. The
-application starts without an API key; calling the chat endpoint without one
-returns a safe `503 llm_not_configured` API error. Agent tests use deterministic
-mock chat models and an isolated in-memory SQLite database; they do not make
-paid provider requests. LangChain's current `create_agent` API is used with
-Google's official Gemini integration.
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/agent/chat` | Send a message, optionally scoped to a customer |
+| `GET` | `/api/agent/conversations/latest` | Restore the latest chat for a customer |
+| `GET` `POST` | `/api/agent/customer-summary/{customer_id}` | AI customer summary |
+| `GET` `POST` | `/api/agent/meeting-brief/{meeting_id}` | AI meeting preparation brief |
+| `POST` | `/api/agent/actions/{action_id}/confirm` | Approve and execute a proposal |
+| `POST` | `/api/agent/actions/{action_id}/cancel` | Cancel a proposal |
+| `POST` | `/api/agent/actions/{action_id}/reject` | Reject a proposal |
+| `POST` `GET` | `/api/agent/tasks` | Create or list structured tasks that need human input |
+| `GET` | `/api/agent/tasks/{task_id}` | Resume a task |
+| `POST` | `/api/agent/tasks/{task_id}/inputs` | Supply the requested information |
+| `POST` | `/api/agent/tasks/{task_id}/cancel` | Cancel a task |
+| `GET` | `/api/agent/policies` | Current autonomy policy per action type |
+| `PUT` | `/api/agent/policies/{action}` | Change a policy (admin only, audited) |
 
-### Confirmed CRM actions
+</details>
 
-The assistant may propose one of these actions after retrieving the relevant
-CRM records: create a meeting, create a follow-up, record the result of an
-already completed call, or mark a follow-up complete. Proposals do not write
-to the database. The customer page presents the pending action with explicit
-Confirm and Cancel choices; confirmation performs the write through the
-existing CRM services, while cancellation makes no CRM changes. Recording a
-call result never places a call.
+<details>
+<summary><b>Google Calendar</b></summary>
 
-The API endpoints are `POST /api/agent/actions/{action_id}/confirm` and
-`POST /api/agent/actions/{action_id}/cancel`. Pending proposals expire after
-`AGENT_ACTION_TTL_SECONDS` (default `300`, configurable from `30` to `3600`
-seconds). Pending action state and LangGraph checkpoints are held in process
-memory, so proposals do not survive an application restart and are not shared
-between separate application workers.
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/integrations/google-calendar` | Connection status |
+| `POST` | `/api/integrations/google-calendar/connect` | Start the OAuth flow |
+| `DELETE` | `/api/integrations/google-calendar` | Disconnect and revoke |
+| `PUT` | `/api/integrations/google-calendar/preferences` | Reminder preferences |
+| `POST` | `/api/integrations/google-calendar/retry` | Retry failed syncs |
+
+</details>
+
+## Security
+
+- **Authentication.** Passwords are hashed with Argon2, sessions use signed JWTs, and every CRM
+  route requires a valid token.
+- **Tenant isolation.** Every query is filtered by the user's organisation. Composite foreign
+  keys and an ORM flush guard stop records from referencing another organisation's data.
+- **Production checks.** When `ENVIRONMENT=production`, startup fails if the JWT secret is
+  shorter than 32 characters or CORS allows `*` or localhost. Public registration is also
+  refused unless `ALLOW_PUBLIC_REGISTRATION_IN_PRODUCTION=true` is set explicitly. API docs are
+  disabled.
+- **AI guardrails.** The model has no SQL access, writes require approval by default, and AI
+  endpoints are rate-limited.
+- **Secrets.** OAuth tokens are encrypted at rest with Fernet. Never commit `.env`, database
+  dumps or customer data.
+- **Deletion.** Deleting a company or customer is blocked while related records exist. Optional
+  links from activities use `ON DELETE SET NULL`, so activity history is kept.
+
+## Limitations
+
+- **No signup yet.** `POST /api/auth/register` does not create an organisation, so it fails
+  while the new user has none. Keep `ALLOW_PUBLIC_REGISTRATION=false` and create users as shown
+  above.
+- **Email verification** fields are stored but not enforced.
+- **Single process.** Rate limits and LangGraph checkpoints live in process memory. They are
+  lost on restart and not shared between workers.
+- **Meeting-to-proposal conversion** is reported as unavailable, because the schema doesn't
+  record a proposal outcome per meeting.
+- **Rule-based recommendations.** They depend on the data entered: a lead with no logged
+  activity is measured from its creation date. They suggest priorities; they don't predict
+  outcomes.
+- **No screenshots or hosted demo** yet. Run it locally to see the interface.
+
+## Project layout
+
+```text
+app/
+  api/routes/     HTTP endpoints
+  services/       business rules, scoping, scheduling, insights, calendar sync
+  models/         SQLAlchemy models and the tenant guard
+  schemas/        Pydantic request and response models
+  agent/          LangGraph agent, prompts and tools
+  frontend/       HTML, CSS and JavaScript served by FastAPI
+alembic/          schema migrations
+docs/             scheduling notes and the 0013 migration runbook
+scripts/rehearsal/  helpers for rehearsing migrations on a disposable schema
+tests/            pytest suite
+```
