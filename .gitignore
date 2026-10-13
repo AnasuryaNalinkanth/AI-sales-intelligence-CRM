@@ -40,3 +40,25 @@ graphify-out/cost.json
 # Local database backups
 *_pre0013_*.sql
 ai_sales_crm_backup.sql
+
+# Generated code-analysis artifacts
+graphify-out/
+
+# Temporary agent source dumps
+create_agent_source.txt
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local database backups
+*_pre0013_*.sql
+ai_sales_crm_backup.sql
