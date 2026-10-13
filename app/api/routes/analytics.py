@@ -17,8 +17,13 @@ from app.schemas.analytics import (
     PipelineMetrics,
     TimeGrain,
 )
-from app.schemas.intelligence import AttentionQueue
-from app.services import analytics_service, intelligence_service
+from app.schemas.intelligence import (
+    AttentionQueue,
+    InsightCategory,
+    InsightLevel,
+    ProactiveInsights,
+)
+from app.services import analytics_service, intelligence_service, proactive_insights_service
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -136,6 +141,30 @@ def get_attention_queue(
         stale_days=stale_days,
         limit=limit,
         new_enquiry_grace_days=new_enquiry_grace_days,
+    )
+
+
+@router.get("/proactive-insights", response_model=ProactiveInsights)
+def get_proactive_insights(
+    db: Session = Depends(get_db),
+    category: InsightCategory | None = Query(default=None),
+    urgency: InsightLevel | None = Query(default=None),
+    min_score: int = Query(default=0, ge=0, le=100),
+    customer_id: int | None = Query(default=None, ge=1),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+) -> ProactiveInsights:
+    return proactive_insights_service.get_proactive_insights(
+        db,
+        organization_id=current_user.organization_id,
+        now=datetime.now(timezone.utc),
+        category=category,
+        urgency=urgency,
+        min_score=min_score,
+        customer_id=customer_id,
+        page=page,
+        page_size=page_size,
     )
 
 

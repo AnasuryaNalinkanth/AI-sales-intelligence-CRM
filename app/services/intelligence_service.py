@@ -131,6 +131,124 @@ def _by_scope(rows: Iterable[Any]) -> dict[tuple[int, int | None], Any]:
     return {(row.customer_id, row.enquiry_id): row for row in rows}
 
 
+def overdue_followup(today_start: datetime) -> Any:
+    # The overdue rule is the one analytics_service uses, so the counts agree.
+    return (FollowUp.status == "overdue") | (
+        FollowUp.status.in_(OPEN_FOLLOWUP_STATUSES) & (FollowUp.due_date < today_start)
+    )
+
+
+def activity_facts(
+    db: Session,
+    *,
+    organization_id: int,
+    now: datetime,
+    today_start: datetime,
+    customers: Any,
+) -> tuple[dict[tuple[int, int | None], Any], ...]:
+    """Per (customer_id, enquiry_id) activity facts for the given customers, in three queries.
+
+    Each row has last_activity (latest counted past activity) and next_step (earliest
+    upcoming active one); follow-up rows also carry overdue_count and oldest_overdue.
+    """
+    meetings = _by_scope(
+        db.execute(
+            select(
+                Meeting.customer_id,
+                Meeting.enquiry_id,
+                func.max(
+                    case(
+                        (
+                            (Meeting.status == "completed") & (Meeting.scheduled_at <= now),
+                            Meeting.scheduled_at,
+                        )
+                    )
+                ).label("last_activity"),
+                func.min(
+                    case(
+                        (
+                            (Meeting.status == "scheduled") & (Meeting.scheduled_at > now),
+                            Meeting.scheduled_at,
+                        )
+                    )
+                ).label("next_step"),
+            )
+            .where(
+                Meeting.organization_id == organization_id,
+                Meeting.customer_id.in_(customers),
+            )
+            .group_by(Meeting.customer_id, Meeting.enquiry_id)
+        )
+    )
+
+    call_time = func.coalesce(Call.actual_time, Call.scheduled_at)
+    calls = _by_scope(
+        db.execute(
+            select(
+                Call.customer_id,
+                Call.enquiry_id,
+                func.max(
+                    case(
+                        (
+                            Call.status.in_(COUNTED_CALL_STATUSES) & (call_time <= now),
+                            call_time,
+                        )
+                    )
+                ).label("last_activity"),
+                func.min(
+                    case(
+                        (
+                            (Call.status == "scheduled") & (Call.scheduled_at > now),
+                            Call.scheduled_at,
+                        )
+                    )
+                ).label("next_step"),
+            )
+            .where(
+                Call.organization_id == organization_id,
+                Call.customer_id.in_(customers),
+            )
+            .group_by(Call.customer_id, Call.enquiry_id)
+        )
+    )
+
+    is_overdue = overdue_followup(today_start)
+    followups = _by_scope(
+        db.execute(
+            select(
+                FollowUp.customer_id,
+                FollowUp.enquiry_id,
+                func.max(
+                    case(
+                        (
+                            (FollowUp.status == "completed") & (FollowUp.completed_at <= now),
+                            FollowUp.completed_at,
+                        )
+                    )
+                ).label("last_activity"),
+                func.min(
+                    case(
+                        (
+                            FollowUp.status.in_(OPEN_FOLLOWUP_STATUSES)
+                            & (FollowUp.due_date >= today_start),
+                            FollowUp.due_date,
+                        )
+                    )
+                ).label("next_step"),
+                func.count(case((is_overdue, 1))).label("overdue_count"),
+                func.min(case((is_overdue, FollowUp.due_date))).label("oldest_overdue"),
+            )
+            .where(
+                FollowUp.organization_id == organization_id,
+                FollowUp.customer_id.in_(customers),
+            )
+            .group_by(FollowUp.customer_id, FollowUp.enquiry_id)
+        )
+    )
+
+    return meetings, calls, followups
+
+
 @_database_errors
 def get_attention_queue(
     db: Session,
@@ -167,102 +285,12 @@ def get_attention_queue(
         )
     ).all()
 
-    meetings = _by_scope(
-        db.execute(
-            select(
-                Meeting.customer_id,
-                Meeting.enquiry_id,
-                func.max(
-                    case(
-                        (
-                            (Meeting.status == "completed") & (Meeting.scheduled_at <= now),
-                            Meeting.scheduled_at,
-                        )
-                    )
-                ).label("last_activity"),
-                func.min(
-                    case(
-                        (
-                            (Meeting.status == "scheduled") & (Meeting.scheduled_at > now),
-                            Meeting.scheduled_at,
-                        )
-                    )
-                ).label("next_step"),
-            )
-            .where(
-                Meeting.organization_id == organization_id,
-                Meeting.customer_id.in_(open_customers),
-            )
-            .group_by(Meeting.customer_id, Meeting.enquiry_id)
-        )
-    )
-
-    call_time = func.coalesce(Call.actual_time, Call.scheduled_at)
-    calls = _by_scope(
-        db.execute(
-            select(
-                Call.customer_id,
-                Call.enquiry_id,
-                func.max(
-                    case(
-                        (
-                            Call.status.in_(COUNTED_CALL_STATUSES) & (call_time <= now),
-                            call_time,
-                        )
-                    )
-                ).label("last_activity"),
-                func.min(
-                    case(
-                        (
-                            (Call.status == "scheduled") & (Call.scheduled_at > now),
-                            Call.scheduled_at,
-                        )
-                    )
-                ).label("next_step"),
-            )
-            .where(
-                Call.organization_id == organization_id,
-                Call.customer_id.in_(open_customers),
-            )
-            .group_by(Call.customer_id, Call.enquiry_id)
-        )
-    )
-
-    # The overdue rule is the one analytics_service uses, so the counts agree.
-    is_overdue = (FollowUp.status == "overdue") | (
-        FollowUp.status.in_(OPEN_FOLLOWUP_STATUSES) & (FollowUp.due_date < today_start)
-    )
-    followups = _by_scope(
-        db.execute(
-            select(
-                FollowUp.customer_id,
-                FollowUp.enquiry_id,
-                func.max(
-                    case(
-                        (
-                            (FollowUp.status == "completed") & (FollowUp.completed_at <= now),
-                            FollowUp.completed_at,
-                        )
-                    )
-                ).label("last_activity"),
-                func.min(
-                    case(
-                        (
-                            FollowUp.status.in_(OPEN_FOLLOWUP_STATUSES)
-                            & (FollowUp.due_date >= today_start),
-                            FollowUp.due_date,
-                        )
-                    )
-                ).label("next_step"),
-                func.count(case((is_overdue, 1))).label("overdue_count"),
-                func.min(case((is_overdue, FollowUp.due_date))).label("oldest_overdue"),
-            )
-            .where(
-                FollowUp.organization_id == organization_id,
-                FollowUp.customer_id.in_(open_customers),
-            )
-            .group_by(FollowUp.customer_id, FollowUp.enquiry_id)
-        )
+    meetings, calls, followups = activity_facts(
+        db,
+        organization_id=organization_id,
+        now=now,
+        today_start=today_start,
+        customers=open_customers,
     )
 
     def facts(key: tuple[int, int | None]) -> tuple[datetime | None, datetime | None, int, datetime | None]:

@@ -36,3 +36,7 @@ graphify-out/2026-*/
 graphify-out/graph.html
 graphify-out/manifest.json
 graphify-out/cost.json
+
+# Local database backups
+*_pre0013_*.sql
+ai_sales_crm_backup.sql

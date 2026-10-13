@@ -132,6 +132,140 @@ async function loadAnalytics() {
   }
 }
 
+const INSIGHT_PAGE_SIZE = 10;
+const INSIGHT_CATEGORIES = {
+  overdue_followup: "Overdue follow-ups",
+  stalled_deal: "Stalled deals",
+  neglected_lead: "Neglected leads",
+  needs_attention: "Needs attention",
+};
+const EVIDENCE_KINDS = { fact: "Fact", estimate: "Estimate", missing_data: "Missing data" };
+const insightFilters = document.querySelector("#insights-filters");
+const insightCounts = document.querySelector("#insights-counts");
+const insightStatus = document.querySelector("#insights-status");
+const insightList = document.querySelector("#insights-list");
+const insightPagination = document.querySelector("#insights-pagination");
+let insightPage = 1;
+
+// Links always open the record's own customer page; anything else is not rendered.
+function safeRecordHref(href) {
+  return typeof href === "string" && /^\/customer\?customer_id=\d+(#(enquiry|followup|meeting)-\d+)?$/.test(href)
+    ? href
+    : null;
+}
+
+function renderInsightCounts(counts, selected) {
+  insightCounts.replaceChildren();
+  for (const [category, label] of Object.entries(INSIGHT_CATEGORIES)) {
+    const button = element("button", "insights-count");
+    button.type = "button";
+    button.setAttribute("aria-pressed", String(selected === category));
+    button.append(element("strong", "", String(numberValue(counts?.[category]))), document.createTextNode(label));
+    button.addEventListener("click", () => {
+      insightFilters.elements.category.value = selected === category ? "" : category;
+      insightPage = 1;
+      void loadInsights();
+    });
+    insightCounts.append(button);
+  }
+}
+
+function renderInsight(item) {
+  const card = element("li", "insight-card");
+  card.dataset.urgency = item.urgency;
+  const top = element("div", "insight-top");
+  const badges = element("div", "insight-badges");
+  for (const [label, level] of [[`${humanize(item.urgency)} urgency`, item.urgency], [`${humanize(item.potential_impact)} impact`, item.potential_impact]]) {
+    const badge = element("span", "insight-badge", label);
+    badge.dataset.level = level;
+    badges.append(badge);
+  }
+  badges.append(element("span", "insight-badge", `Score ${numberValue(item.priority_score)}/100`));
+  top.append(element("h3", "insight-title", item.title), badges);
+  card.append(
+    top,
+    element("p", "insight-summary", `${INSIGHT_CATEGORIES[item.category] ?? humanize(item.category)} · ${item.summary}`),
+    element("p", "insight-reason", item.reason),
+  );
+  const action = element("p", "insight-action");
+  action.append(element("strong", "", "Suggested next step: "), document.createTextNode(item.recommended_next_action));
+  card.append(action);
+  const evidence = element("details", "insight-evidence");
+  evidence.append(element("summary", "", `Evidence (${item.evidence.length})`));
+  const evidenceList = element("ul");
+  for (const fact of item.evidence) {
+    const entry = element("li");
+    entry.dataset.kind = fact.kind;
+    entry.append(element("span", "insight-evidence-kind", `${EVIDENCE_KINDS[fact.kind] ?? fact.kind}: `), document.createTextNode(fact.detail));
+    evidenceList.append(entry);
+  }
+  evidence.append(evidenceList);
+  card.append(evidence);
+  const links = element("nav", "insight-links");
+  links.setAttribute("aria-label", `Records for ${item.title}`);
+  for (const link of item.links) {
+    const href = safeRecordHref(link.href);
+    if (!href) continue;
+    const anchor = element("a", "", link.label);
+    anchor.href = href;
+    links.append(anchor);
+  }
+  card.append(links);
+  return card;
+}
+
+async function loadInsights() {
+  if (!requireAuth()) return;
+  const formData = new FormData(insightFilters);
+  const category = formData.get("category") || "";
+  insightStatus.hidden = false;
+  insightStatus.classList.remove("analytics-error");
+  insightStatus.textContent = "Loading recommendations...";
+  insightList.replaceChildren();
+  insightPagination.hidden = true;
+  try {
+    const result = await getAnalytics("proactive-insights", {
+      category,
+      urgency: formData.get("urgency"),
+      page: insightPage,
+      page_size: INSIGHT_PAGE_SIZE,
+    });
+    renderInsightCounts(result.counts_by_category, category);
+    for (const item of result.items) insightList.append(renderInsight(item));
+    if (result.total === 0) {
+      insightStatus.textContent = category || formData.get("urgency")
+        ? "No recommendations match these filters."
+        : "Nothing needs attention right now: no overdue follow-ups, neglected leads, stalled deals or upcoming meetings to prepare.";
+    } else {
+      insightStatus.hidden = true;
+    }
+    const pages = Math.ceil(result.total / INSIGHT_PAGE_SIZE);
+    insightPagination.hidden = pages <= 1;
+    document.querySelector("#insights-page").textContent = `Page ${insightPage} of ${pages}`;
+    document.querySelector("#insights-previous").disabled = insightPage <= 1;
+    document.querySelector("#insights-next").disabled = insightPage >= pages;
+  } catch {
+    // Never show stale or partial recommendations as if they were current.
+    insightCounts.replaceChildren();
+    insightStatus.classList.add("analytics-error");
+    insightStatus.textContent = "Unable to load recommendations. Try Refresh.";
+  }
+}
+
+insightFilters.addEventListener("change", () => {
+  insightPage = 1;
+  void loadInsights();
+});
+document.querySelector("#insights-refresh").addEventListener("click", () => void loadInsights());
+document.querySelector("#insights-previous").addEventListener("click", () => {
+  insightPage = Math.max(1, insightPage - 1);
+  void loadInsights();
+});
+document.querySelector("#insights-next").addEventListener("click", () => {
+  insightPage += 1;
+  void loadInsights();
+});
+
 filterForm.addEventListener("submit", (event) => {
   event.preventDefault();
   if (!requireAuth()) return;
@@ -155,5 +289,6 @@ filterForm.addEventListener("reset", () => {
 mountAuthControls();
 if (requireAuth()) {
   void loadAnalytics();
+  void loadInsights();
 }
 

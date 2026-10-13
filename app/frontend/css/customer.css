@@ -236,3 +236,7 @@
 }
 .ai-summary > summary { width: fit-content; color: var(--text); font-size: var(--text-sm); font-weight: 600; }
 .ai-summary[open] > .ai-output { margin-top: var(--space-2); }
+
+/* A record opened from a recommendation link. */
+.is-linked-record { outline: 2px solid var(--primary); outline-offset: 2px; }
+.record-link-missing { margin-bottom: var(--space-3); }

@@ -84,6 +84,12 @@ def test_all_read_only_tools_return_structured_data(
             "get_customer_followups",
             "get_customer_activity",
             "get_sales_analytics",
+            "get_proactive_insights",
+        }
+        insights = json.loads(tools["get_proactive_insights"].invoke({}))
+        assert isinstance(insights["data"]["items"], list)
+        assert set(insights["data"]["counts_by_category"]) == {
+            "overdue_followup", "stalled_deal", "neglected_lead", "needs_attention"
         }
         search = json.loads(tools["find_customer"].invoke({"search": "ABC Trading"}))
         profile = json.loads(

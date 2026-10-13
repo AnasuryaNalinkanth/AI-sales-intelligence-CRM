@@ -1277,6 +1277,25 @@ function openHitlPanel() {
   scrollToElement(hitlContent.closest(".hitl-panel"));
 }
 
+// Recommendations link to one record on its customer's page, e.g. #followup-12. The
+// page only renders the linked customer's own records, so a missing target is reported
+// instead of scrolling somewhere else.
+function followRecordLink() {
+  const match = /^#((?:enquiry|followup|meeting)-\d+)$/.exec(window.location.hash);
+  if (!match || !selectedCustomer) return;
+  const target = document.getElementById(match[1]);
+  if (!target) {
+    const notice = element("p", "detail-api-error record-link-missing", "The linked record was not found for this customer.");
+    notice.setAttribute("role", "alert");
+    detailPanel.prepend(notice);
+    return;
+  }
+  target.classList.add("is-linked-record");
+  target.tabIndex = -1;
+  scrollToElement(target);
+  target.focus({ preventScroll: true });
+}
+
 // A deep link scrolls as soon as the page starts, but the customer list, the linked
 // customer and the task list then render above or inside the panel and push it down.
 // Scroll once more when those loads settle, unless the user has already moved.
@@ -1644,6 +1663,7 @@ function appendActivities(parent, customer) {
     const list = element("div", "activity-record-list");
     for (const meeting of meetings) {
       const card = element("article", "activity-record-card");
+      card.id = `meeting-${meeting.meeting_id}`;
       const top = element("div", "activity-record-top");
       top.append(
         element(
@@ -1733,6 +1753,7 @@ function appendActivities(parent, customer) {
     const list = element("div", "activity-record-list");
     for (const followup of followups) {
       const card = element("article", "activity-record-card");
+      card.id = `followup-${followup.followup_id}`;
       const top = element("div", "activity-record-top");
       top.append(
         element("strong", "", displayValue(followup.description, humanize(followup.type))),
@@ -1896,6 +1917,7 @@ function renderCustomer(customer) {
     const list = element("div", "enquiry-list");
     for (const enquiry of enquiries) {
       const card = element("article", "enquiry-card");
+      card.id = `enquiry-${enquiry.enquiry_id}`;
       const top = element("div", "enquiry-card-top");
       const identity = element("div");
       identity.append(
@@ -2570,6 +2592,7 @@ if (requireAuth()) {
   if (linkedCustomerId && /^\d+$/.test(linkedCustomerId)) {
     setDetailMessage("Loading customer...", { loading: true });
     customerReady = initialLoad.then(() => selectCustomer(linkedCustomerId));
+    void customerReady.then(followRecordLink);
   } else {
     setDetailMessage("Select a customer from the list or search to view their information.");
   }
