@@ -9,6 +9,7 @@ from app.schemas.customer import CustomerResponse
 from app.schemas.sales_enquiry import (
     EnquiryPriority,
     EnquiryStatus,
+    LeadSource,
     SalesEnquiryResponse,
 )
 from app.schemas.validators import (
@@ -53,6 +54,7 @@ class InitialSalesEnquiryInput(RegistrationInput):
     enquiry_text: str = Field(min_length=1, max_length=MAX_TEXT_LENGTH)
     priority: EnquiryPriority = "normal"
     status: EnquiryStatus = "open"
+    lead_source: LeadSource | None = None
     estimated_value: Decimal | None = Field(
         default=None,
         ge=Decimal("0"),

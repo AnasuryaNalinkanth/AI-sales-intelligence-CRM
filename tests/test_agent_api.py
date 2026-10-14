@@ -77,6 +77,7 @@ def test_all_read_only_tools_return_structured_data(
         tools = _tool_outputs(db)
         assert set(tools) == {
             "find_customer",
+            "find_sales_leads",
             "get_customer_profile",
             "get_sales_enquiries",
             "get_customer_meetings",
@@ -132,6 +133,16 @@ def test_all_read_only_tools_return_structured_data(
         assert profile["data"]["customer"]["customer_name"] == "ABC Trading Customer"
         assert profile["data"]["company"]["company_name"] == "ABC Trading"
         assert len(enquiries["data"]["items"]) == 1
+        lead = enquiries["data"]["items"][0]
+        assert lead["qualification_status"] == "not_ready" and lead["outcome"] is None
+        not_ready = json.loads(
+            tools["find_sales_leads"].invoke({"qualification_status": "not_ready"})
+        )
+        assert [item["enquiry_id"] for item in not_ready["data"]["items"]] == [lead["enquiry_id"]]
+        assert not_ready["data"]["items"][0]["customer_name"] == "ABC Trading Customer"
+        assert json.loads(
+            tools["find_sales_leads"].invoke({"qualification_status": "ready"})
+        )["data"]["items"] == []
         assert len(meetings["data"]["items"]) == 1
         assert len(calls["data"]["items"]) == 1
         assert len(followups["data"]["items"]) == 1

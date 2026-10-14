@@ -253,7 +253,7 @@ function appendActivityToolbar(section, count) {
   filter.setAttribute("aria-label", "Filter activity timeline");
   for (const [value, label] of [
     ["", "All activities"],
-    ["enquiry", "Enquiries"],
+    ["enquiry", "Sales leads"],
     ["meeting", "Meetings"],
     ["call", "Calls"],
     ["follow_up", "Follow-ups"],
@@ -496,7 +496,11 @@ const agentActionLabels = {
   record_call_result: "Record call result",
   complete_followup: "Complete follow-up",
   apply_enrichment: "Apply CRM enrichment",
+  update_lead_qualification: "Set lead qualification",
+  close_opportunity: "Close opportunity (Won / Lost)",
 };
+// The server refuses "automatic" for these: a person always approves them.
+const approvalOnlyActions = new Set(["update_lead_qualification", "close_opportunity"]);
 
 const hitlActions = Object.keys(agentActionLabels);
 const hitlModes = ["automatic", "approval_required", "disabled"];
@@ -906,6 +910,7 @@ function renderHitlPolicies(policies) {
     const select = element("select", "hitl-policy-select");
     select.setAttribute("aria-label", `Policy for ${agentActionLabels[action]}`);
     for (const mode of hitlModes) {
+      if (mode === "automatic" && approvalOnlyActions.has(action)) continue;
       const option = element("option", "", humanize(mode));
       option.value = mode;
       option.selected = policies[action] === mode;
@@ -1766,7 +1771,7 @@ function appendActivities(parent, customer) {
         "Due",
         formatDateTime(followup.due_date, followup.due_timezone),
       );
-      appendOptionalText(card, "Related enquiry", labelForId(customer.sales_enquiries, "enquiry_id", followup.enquiry_id, "product"));
+      appendOptionalText(card, "Related sales lead", labelForId(customer.sales_enquiries, "enquiry_id", followup.enquiry_id, "product"));
       appendOptionalText(card, "Related meeting", labelForId(meetings, "meeting_id", followup.meeting_id, "agenda"));
       appendOptionalText(card, "Related call", labelForId(calls, "call_id", followup.call_id, "call_type"));
       if (followup.status !== "completed") {
@@ -1910,9 +1915,12 @@ function renderCustomer(customer) {
   }
 
   const enquiries = Array.isArray(customer.sales_enquiries) ? customer.sales_enquiries : [];
-  const enquirySection = appendSection(content, "Sales enquiries", enquiries.length);
+  const enquirySection = appendSection(content, "Sales leads", enquiries.length);
+  const leadsLink = element("a", "text-button", "Open in Sales leads");
+  leadsLink.href = `/leads?customer_id=${encodeURIComponent(customer.customer_id)}`;
+  enquirySection.append(leadsLink);
   if (enquiries.length === 0) {
-    enquirySection.append(element("p", "section-empty", "No sales enquiries recorded."));
+    enquirySection.append(element("p", "section-empty", "No sales leads recorded."));
   } else {
     const list = element("div", "enquiry-list");
     for (const enquiry of enquiries) {
@@ -1921,7 +1929,7 @@ function renderCustomer(customer) {
       const top = element("div", "enquiry-card-top");
       const identity = element("div");
       identity.append(
-        element("span", "enquiry-product", displayValue(enquiry.product, "Sales enquiry")),
+        element("span", "enquiry-product", displayValue(enquiry.product, "Sales lead")),
         element("span", "enquiry-date", `Created ${formatDate(enquiry.created_at)}`),
       );
       top.append(identity, element("span", statusClass(enquiry.status), humanize(enquiry.status)));
@@ -1933,7 +1941,9 @@ function renderCustomer(customer) {
       meta.append(
         element("span", "meta-pill", `${humanize(enquiry.priority)} priority`),
         element("span", "meta-pill", `Estimated value: ${formatNumber(enquiry.estimated_value)}`),
+        element("span", statusClass(enquiry.qualification_status), enquiry.qualification_status === "ready" ? "Ready" : "Not Ready"),
       );
+      if (enquiry.outcome) meta.append(element("span", statusClass(enquiry.outcome), enquiry.outcome === "won" ? "Won" : "Lost"));
       card.append(meta);
       list.append(card);
     }
@@ -2069,7 +2079,7 @@ function configureActivityForm(kind, record = null) {
     });
     addFormField({
       name: "enquiry_id",
-      label: "Related enquiry",
+      label: "Related sales lead",
       type: "select",
       options: enquiries,
       defaultValue: record?.enquiry_id ?? "",
@@ -2118,7 +2128,7 @@ function configureActivityForm(kind, record = null) {
     });
     addFormField({
       name: "enquiry_id",
-      label: "Related enquiry",
+      label: "Related sales lead",
       type: "select",
       options: enquiries,
       defaultValue: record?.enquiry_id ?? "",
@@ -2194,7 +2204,7 @@ function configureActivityForm(kind, record = null) {
     });
     addFormField({
       name: "enquiry_id",
-      label: "Related enquiry",
+      label: "Related sales lead",
       type: "select",
       options: enquiries,
       defaultValue: record?.enquiry_id ?? "",

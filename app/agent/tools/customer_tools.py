@@ -5,12 +5,12 @@ from langchain_core.tools import StructuredTool
 from app.core.exceptions import APIError
 from app.database.connection import SessionLocal
 from app.schemas.customer import CustomerDetailResponse, CustomerListItem
-from app.schemas.sales_enquiry import SalesEnquiryResponse
-from app.services import customer_service
+from app.schemas.sales_enquiry import SalesEnquiryResponse, SalesLeadListItem
+from app.services import customer_service, enquiry_service
 
 from .common import bounded_records, error_output, success_output
 from .context import AgentToolContext
-from .schemas import CustomerIdInput, FindCustomerInput
+from .schemas import CustomerIdInput, FindCustomerInput, FindSalesLeadsInput
 
 
 def build_customer_tools(
@@ -86,7 +86,7 @@ def build_customer_tools(
                 session.close()
 
     def get_customer_profile(customer_id: int) -> str:
-        """Retrieve a customer's profile, company, contacts, and sales enquiries."""
+        """Retrieve a customer's profile, company, contacts, and sales leads (sales_enquiries)."""
         session, owns_session = get_session()
 
         try:
@@ -141,7 +141,7 @@ def build_customer_tools(
                 session.close()
 
     def get_sales_enquiries(customer_id: int) -> str:
-        """List the customer's sales enquiries, including product, status, and value."""
+        """List the customer's sales leads with product, stage, value, qualification (ready/not_ready) and outcome (won/lost, null while open)."""
         session, owns_session = get_session()
 
         try:
@@ -180,7 +180,54 @@ def build_customer_tools(
             if owns_session:
                 session.close()
 
+    def find_sales_leads(
+        search: str | None = None,
+        qualification_status: str | None = None,
+        outcome: str | None = None,
+    ) -> str:
+        """Search sales leads across customers. qualification_status (ready/not_ready) and outcome (open/won/lost) are separate filters."""
+        session, owns_session = get_session()
+
+        try:
+            rows, total = enquiry_service.list_leads(
+                session,
+                organization_id=organization_id,
+                page=1,
+                page_size=25,
+                search=search,
+                qualification_status=qualification_status,
+                outcome=outcome,
+                customer_id=context.locked_customer_id,
+            )
+            records = []
+            for row in rows:
+                enquiry = row.pop("enquiry")
+                context.remember_enquiry(enquiry.customer_id, enquiry.enquiry_id)
+                records.append(
+                    SalesLeadListItem.model_validate(
+                        {**SalesEnquiryResponse.model_validate(enquiry).model_dump(), **row}
+                    ).model_dump(mode="json")
+                )
+            return success_output({**bounded_records(records), "total": total})
+
+        except APIError as exc:
+            return error_output(exc)
+
+        except SQLAlchemyError as exc:
+            session.rollback()
+            return database_error(exc)
+
+        finally:
+            if owns_session:
+                session.close()
+
     return [
+        StructuredTool.from_function(
+            func=find_sales_leads,
+            name="find_sales_leads",
+            description=find_sales_leads.__doc__,
+            args_schema=FindSalesLeadsInput,
+        ),
         StructuredTool.from_function(
             func=find_customer,
             name="find_customer",

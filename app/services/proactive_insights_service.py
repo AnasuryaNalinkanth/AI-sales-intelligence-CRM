@@ -134,7 +134,7 @@ def _build(
     for item in overdue:
         days = max((now - _as_utc(item.due_date)).days, 0)
         linked = (
-            f" (linked to enquiry #{item.enquiry_id}, which is no longer open)"
+            f" (linked to sales lead #{item.enquiry_id}, which is no longer open)"
             if item.enquiry_id is not None and enquiry_id is None
             else ""
         )
@@ -244,9 +244,9 @@ def _build(
         evidence.append(
             InsightEvidence(
                 kind="estimate",
-                detail=f"Enquiry has been open for {age_days} days since it was created. The CRM "
+                detail=f"Sales lead has been open for {age_days} days since it was created. The CRM "
                 "records no stage-change dates, so time in the current stage is unknown; this "
-                "is the enquiry's age, not its time in stage.",
+                "is the lead's age, not its time in stage.",
                 record_type="enquiry",
                 record_id=enquiry_id,
             )
@@ -270,7 +270,7 @@ def _build(
         evidence.append(
             InsightEvidence(
                 kind="fact",
-                detail=f"Enquiry priority is {enquiry.priority}; customer sales stage is {stage}.",
+                detail=f"Sales lead priority is {enquiry.priority}; customer sales stage is {stage}.",
                 record_type="enquiry",
                 record_id=enquiry_id,
             )
@@ -318,9 +318,9 @@ def _build(
         ),
         "imminence": lambda: f"Meeting #{meetings[0].meeting_id} is within "
         f"{RULES['meeting_prep_days']} days.",
-        "priority": lambda: f"Enquiry priority is {priority}.",
+        "priority": lambda: f"Sales lead priority is {priority}.",
         "stage": lambda: f"Customer is in the {stage} stage.",
-        "value": lambda: f"Estimated value {value} is large relative to other open enquiries.",
+        "value": lambda: f"Estimated value {value} is large relative to other open sales leads.",
     }
     contributions = {
         name: (sw["urgency"] * uw[name] if name in uw else sw["impact"] * iw[name]) * component
@@ -334,14 +334,14 @@ def _build(
     )
 
     name = customer.customer_name
-    subject_label = f"enquiry #{enquiry_id}" if enquiry is not None else "customer-level records"
+    subject_label = f"sales lead #{enquiry_id}" if enquiry is not None else "customer-level records"
     if category == "overdue_followup":
         title = f"{len(overdue)} overdue follow-up(s) for {name}"
         action = (
             f"Complete or reschedule follow-up #{overdue[0].followup_id}, then record the outcome."
         )
     elif category == "stalled_deal":
-        title = f"Enquiry #{enquiry_id} for {name} may be stalled"
+        title = f"Sales lead #{enquiry_id} for {name} may be stalled"
         action = (
             "Contact the customer to confirm whether the deal is still active and agree a dated "
             "next step."
@@ -356,8 +356,8 @@ def _build(
             f"#{meetings[0].meeting_id}."
         )
     else:
-        title = f"High-priority enquiry #{enquiry_id} has no next step"
-        action = "Plan a dated next step (call, meeting or follow-up) for this enquiry."
+        title = f"High-priority sales lead #{enquiry_id} has no next step"
+        action = "Plan a dated next step (call, meeting or follow-up) for this sales lead."
     product = enquiry.product if enquiry is not None and enquiry.product else None
     summary = f"{name} ({subject.company_name}), {subject_label}"
     summary += (f": {product}" if product else "") + "."

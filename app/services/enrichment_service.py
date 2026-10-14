@@ -10,6 +10,7 @@ from app.models import Customer, SalesEnquiry
 from app.schemas.customer import CustomerUpdate
 from app.schemas.sales_enquiry import SalesEnquiryUpdate
 from app.services.activity_validation import owned
+from app.services.enquiry_service import ensure_lead_open
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,9 @@ def apply_enrichment(
                         code="enquiry_id_required",
                     )
 
-                enquiry = owned(db, SalesEnquiry, enquiry_id, organization_id=organization_id)
+                enquiry = owned(
+                    db, SalesEnquiry, enquiry_id, organization_id=organization_id, for_update=True
+                )
 
                 if enquiry is None:
                     raise APIError(
@@ -70,6 +73,7 @@ def apply_enrichment(
                         status_code=400,
                         code="enquiry_customer_mismatch",
                     )
+                ensure_lead_open(enquiry)
 
             if customer_updates:
                 validated_customer = CustomerUpdate.model_validate(

@@ -21,7 +21,7 @@ _The assistant reads everything. It writes nothing you haven't approved._
 Most CRMs store what happened. They don't tell you what to do next, and if they do, you can't
 see why.
 
-SalesDesk is a full-stack CRM for customers, enquiries, meetings, calls and follow-ups. It has
+SalesDesk is a full-stack CRM for customers, sales leads, meetings, calls and follow-ups. It has
 a ranked list of recommended actions, and every recommendation shows the evidence behind it.
 It also has a Gemini-powered assistant that answers from your real CRM records. When the
 assistant wants to change something, it proposes the change and waits for a person to approve
@@ -33,8 +33,18 @@ separate frontend build step.
 ## What it does
 
 **Customer workspace.** Register a customer, their company, a primary contact and the first
-sales enquiry in one transaction. Search and page through customers, then open one to see
-contacts, enquiries and a filterable timeline of every meeting, call and follow-up.
+sales lead in one transaction. Search and page through customers, then open one to see
+contacts, sales leads and a filterable timeline of every meeting, call and follow-up.
+
+**Sales leads and pipeline.** The Sales leads page (`/leads`) lists every lead with search,
+filters and pagination. A lead belongs to an existing customer and can link one of its contacts,
+an assigned sales rep, a lead source, an estimated value and an expected close date. Two
+separate fields track it: *qualification* (`Ready` / `Not Ready`, new leads start Not Ready) and
+*outcome* (`Won` / `Lost`, empty while open). Marking a lead Not Ready can schedule its next
+follow-up in the same step. Only a Ready, open lead is an active opportunity, and only it can be
+closed; closing records the outcome and time (and a required loss reason for Lost) and makes the
+lead read-only. There is no reopen. Leads are stored in the `sales_enquiries` table and the
+`/api/enquiries` routes are unchanged, so existing integrations keep working.
 
 **Shared scheduling.** Meetings, scheduled calls and active follow-ups share one calendar per
 workspace. New bookings are checked for conflicts, alternative slots within business hours are
@@ -62,7 +72,8 @@ audited.
 **Excel import.** Upload a `.xlsx` workbook with `Companies`, `Customers`, `Contacts`,
 `Sales_Enquiries`, `Meetings`, `Calls`, `Follow_Ups` and `TEST_EXPECTATIONS` sheets. Sheets,
 columns and cross-references are validated first, and the whole import runs in one transaction,
-so a failure rolls everything back.
+so a failure rolls everything back. `Sales_Enquiries` (sales leads) may add an optional
+`lead_source` column; rows without one are recorded as `import`. Imported leads start Not Ready.
 
 **Google Calendar sync (optional).** Each user can connect their own Google Calendar from
 Settings. CRM activities are then mirrored as calendar events, and failed syncs can be retried.
@@ -101,8 +112,11 @@ can only call a fixed set of tools:
 
 | Kind | Tools |
 | --- | --- |
-| Read | `find_customer`, `get_customer_profile`, `get_sales_enquiries`, `get_customer_meetings`, `get_customer_calls`, `get_customer_followups`, `get_customer_activity`, `get_sales_analytics`, `get_proactive_insights`, `analyze_crm_activity` |
-| Propose | `create_meeting`, `create_followup`, `schedule_call`, `record_call_result`, `complete_followup`, `apply_enrichment` |
+| Read | `find_customer`, `find_sales_leads`, `get_customer_profile`, `get_sales_enquiries`, `get_customer_meetings`, `get_customer_calls`, `get_customer_followups`, `get_customer_activity`, `get_sales_analytics`, `get_proactive_insights`, `analyze_crm_activity` |
+| Propose | `create_meeting`, `create_followup`, `schedule_call`, `record_call_result`, `complete_followup`, `apply_enrichment`, `update_lead_qualification`, `close_opportunity` |
+
+`update_lead_qualification` and `close_opportunity` are approval-only: their policy can be
+`approval_required` or `disabled`, never `automatic`.
 
 Some rules hold for every conversation:
 
@@ -212,6 +226,11 @@ It covers the backup, a rehearsal on a restored copy, preflight checks, interrup
 and rollback. The migration is resumable, refuses offline `--sql` mode, and stops if any row
 count changes.
 
+Migration `20261013_0014` adds the lead fields to `sales_enquiries` (contact, assigned rep,
+lead source, expected close date, qualification, outcome, closed time, loss reason) and allows
+the two new assistant actions. Every new column is nullable or defaulted: existing leads become
+Not Ready with no outcome, and nothing is inferred from their old status. Back up first.
+
 ## Tests
 
 ```powershell
@@ -247,11 +266,11 @@ OAuth callback. Interactive documentation is at `/docs`.
 </details>
 
 <details>
-<summary><b>Customers, contacts and enquiries</b></summary>
+<summary><b>Customers, contacts and sales leads</b></summary>
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| `POST` | `/api/customers` | Register customer, company, primary contact and first enquiry together |
+| `POST` | `/api/customers` | Register customer, company, primary contact and first sales lead together |
 | `GET` | `/api/customers` | List customers: `search`, `customer_name`, `company_name`, `page`, `page_size` (≤ 100) |
 | `GET` `PUT` `PATCH` | `/api/customers/{customer_id}` | Read or update a customer |
 | `GET` | `/api/customers/{customer_id}/overview` | Profile with all activity |
@@ -259,9 +278,13 @@ OAuth callback. Interactive documentation is at `/docs`.
 | `POST` | `/api/contacts` | Add a contact |
 | `GET` `PUT` `PATCH` | `/api/contacts/{contact_id}` | Read or update a contact |
 | `GET` | `/api/customers/{customer_id}/contacts` | A customer's contacts |
-| `POST` | `/api/enquiries` | Add a sales enquiry |
-| `GET` `PUT` `PATCH` | `/api/enquiries/{enquiry_id}` | Read or update an enquiry |
-| `GET` | `/api/customers/{customer_id}/enquiries` | A customer's enquiries |
+| `GET` | `/api/enquiries` | List sales leads: `search`, `qualification_status` (`ready`/`not_ready`), `outcome` (`open`/`won`/`lost`), `customer_id`, `assigned_user_id`, `page`, `page_size` |
+| `POST` | `/api/enquiries` | Create a sales lead (starts `not_ready` unless set) |
+| `GET` `PUT` `PATCH` | `/api/enquiries/{enquiry_id}` | Read or update a sales lead; closed opportunities return `409 opportunity_closed` |
+| `POST` | `/api/enquiries/{enquiry_id}/qualification` | Set Ready / Not Ready with a reason; Not Ready may add `next_followup` |
+| `POST` | `/api/enquiries/{enquiry_id}/close` | Close a Ready, open lead as `won` or `lost` (`loss_reason` required for lost) |
+| `GET` | `/api/enquiries/assignees` | Active users a lead can be assigned to |
+| `GET` | `/api/customers/{customer_id}/enquiries` | A customer's sales leads |
 | `POST` | `/api/import` | Import a `.xlsx` workbook |
 
 Example registration body:

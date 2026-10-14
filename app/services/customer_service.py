@@ -122,6 +122,8 @@ def create_customer(
                 priority=registration.sales_enquiry.priority,
                 status=registration.sales_enquiry.status,
                 estimated_value=registration.sales_enquiry.estimated_value,
+                lead_source=registration.sales_enquiry.lead_source,
+                contact=contact,
             )
             db.add(sales_enquiry)
             db.flush()

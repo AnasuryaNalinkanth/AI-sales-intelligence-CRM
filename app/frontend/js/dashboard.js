@@ -450,7 +450,7 @@ function renderAttentionItem(item) {
   const enquiry = element(
     "p",
     "attention-enquiry",
-    `${item.product || "Sales enquiry"} · Enquiry #${item.enquiry_id} · ${humanize(item.status)}`,
+    `${item.product || "Sales lead"} · Lead #${item.enquiry_id} · ${humanize(item.status)}`,
   );
   const reasons = element("ul", "attention-reasons");
   for (const reason of Array.isArray(item.reasons) ? item.reasons : []) {
@@ -537,7 +537,7 @@ function renderSuggestions(item) {
         element(
           "span",
           "attention-suggestion-note",
-          `${basis} Opens a draft in Approvals with this customer and enquiry filled in${needs.length ? `; you add ${needs.join(" and ")}` : ""}. Nothing changes in the CRM until you submit it.`,
+          `${basis} Opens a draft in Approvals with this customer and sales lead filled in${needs.length ? `; you add ${needs.join(" and ")}` : ""}. Nothing changes in the CRM until you submit it.`,
         ),
       );
     } else {
@@ -572,7 +572,7 @@ function renderCustomerLevelContext(item) {
   if (!rows.length) return null;
 
   const box = element("div", "attention-context");
-  box.append(element("p", "attention-context-heading", "Customer-level · not linked to this enquiry"));
+  box.append(element("p", "attention-context-heading", "Customer-level · not linked to this sales lead"));
   const list = element("ul", "attention-context-list");
   for (const [className, label, value] of rows) {
     const row = element("li", className);
@@ -589,12 +589,12 @@ function renderAttention(queue) {
   const open = Number(queue?.open_enquiries) || 0;
   attentionList.replaceChildren(...items.map(renderAttentionItem));
   attentionSummary.textContent = open
-    ? `${needing} of ${open} open enquiries${needing > items.length ? ` · showing the first ${items.length}` : ""}`
+    ? `${needing} of ${open} open sales leads${needing > items.length ? ` · showing the first ${items.length}` : ""}`
     : "";
   attentionStatus.hidden = items.length > 0;
   attentionStatus.textContent = open
-    ? "No open enquiries need attention right now."
-    : "There are no open enquiries.";
+    ? "No open sales leads need attention right now."
+    : "There are no open sales leads.";
   const ordering = Array.isArray(queue?.ordering) ? queue.ordering : [];
   attentionRules.querySelector("ol").replaceChildren(...ordering.map((rule) => element("li", "", rule)));
   attentionRules.hidden = !items.length || !ordering.length;
@@ -604,7 +604,7 @@ async function loadAttention() {
   attentionError.hidden = true;
   attentionRetry.hidden = true;
   attentionStatus.hidden = false;
-  attentionStatus.textContent = "Loading enquiries that need attention…";
+  attentionStatus.textContent = "Loading sales leads that need attention…";
   try {
     renderAttention(await getAnalytics("attention", { limit: ATTENTION_LIMIT }));
   } catch (error) {
@@ -616,7 +616,7 @@ async function loadAttention() {
     const expired = error?.status === 401;
     attentionError.textContent = expired
       ? "Your session has expired. Redirecting to sign in…"
-      : "Enquiries that need attention could not be loaded.";
+      : "Sales leads that need attention could not be loaded.";
     attentionError.hidden = false;
     attentionRetry.hidden = expired;
   }

@@ -1,7 +1,7 @@
 """Write-time tenant guard: a CRM row must share the organization of every record it links to.
 
 MySQL enforces the parent links (customer -> company, activity -> customer) with
-composite foreign keys. The nullable links (contact, enquiry, meeting, call) cannot
+composite foreign keys. The nullable links (contact, enquiry, meeting, call, assignee) cannot
 be enforced that way, because ON DELETE SET NULL would also null organization_id,
 so this listener checks all of them before every flush, on every database.
 Services still scope every read and validate every reference; this is the backstop.
@@ -10,13 +10,17 @@ Services still scope every read and validate every reference; this is the backst
 from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
 
-from app.models.crm import Call, Company, Contact, Customer, FollowUp, Meeting, SalesEnquiry
+from app.models.crm import Call, Company, Contact, Customer, FollowUp, Meeting, SalesEnquiry, User
 
 # model -> (foreign key, relationship, referenced model); the first link is the parent.
 _LINKS: dict[type, tuple[tuple[str, str, type], ...]] = {
     Customer: (("company_id", "company", Company),),
     Contact: (("customer_id", "customer", Customer),),
-    SalesEnquiry: (("customer_id", "customer", Customer),),
+    SalesEnquiry: (
+        ("customer_id", "customer", Customer),
+        ("contact_id", "contact", Contact),
+        ("assigned_user_id", "assigned_user", User),
+    ),
     Meeting: (
         ("customer_id", "customer", Customer),
         ("contact_id", "contact", Contact),

@@ -308,7 +308,7 @@ input::placeholder, textarea::placeholder { color: var(--text-subtle); opacity: 
 .required-mark { color: var(--danger); }
 .field-error { display: none; color: var(--danger); font-size: var(--text-xs); font-weight: 500; }
 .field input[aria-invalid="true"], .field select[aria-invalid="true"], .field textarea[aria-invalid="true"] { border-color: var(--danger); }
-.field input[aria-invalid="true"] + .field-error { display: block; }
+.field [aria-invalid="true"] + .field-error { display: block; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
 .input-prefix { position: relative; }
 .input-prefix > span { position: absolute; top: 50%; left: var(--space-3); color: var(--text-muted); font-size: var(--text-sm); transform: translateY(-50%); }
@@ -349,9 +349,9 @@ input::placeholder, textarea::placeholder { color: var(--text-subtle); opacity: 
 .meta-pill { font-weight: 500; }
 .primary-badge { color: var(--primary-soft-text); background: var(--primary-soft); }
 /* Status tones: success / info / warning / danger / neutral. */
-.status-active, .status-completed, .status-converted, .status-won, .status-synced, .status-connected { color: var(--success); background: var(--success-soft); }
+.status-active, .status-completed, .status-converted, .status-won, .status-ready, .status-synced, .status-connected { color: var(--success); background: var(--success-soft); }
 .status-scheduled, .status-open, .status-in_progress, .status-executing, .status-ready_for_review, .status-collecting_information, .status-qualified, .status-proposal, .status-negotiation, .status-new { color: var(--info); background: var(--info-soft); }
-.status-pending, .status-awaiting_approval, .status-prospect, .status-attempted, .status-overdue, .status-reauthorization_required { color: var(--warning); background: var(--warning-soft); }
+.status-pending, .status-not_ready, .status-awaiting_approval, .status-prospect, .status-attempted, .status-overdue, .status-reauthorization_required { color: var(--warning); background: var(--warning-soft); }
 .status-cancelled, .status-failed, .status-missed, .status-no_show, .status-lost, .status-rejected, .status-expired { color: var(--danger); background: var(--danger-soft); }
 .status-inactive, .status-closed { color: var(--text-muted); background: var(--neutral-soft); }
 

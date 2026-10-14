@@ -23,7 +23,7 @@
       <div class="page-intro">
         <div>
           <h1>Sales analytics</h1>
-          <p>Metrics calculated from customer, enquiry, activity and follow-up records. Leave the dates empty to include all records.</p>
+          <p>Metrics calculated from customer, sales lead, activity and follow-up records. Leave the dates empty to include all records.</p>
         </div>
       </div>
       <section id="insights" class="insights-panel" aria-labelledby="insights-heading">
@@ -80,7 +80,8 @@
         <div id="analytics-kpis" class="analytics-kpis" hidden>
           <article class="analytics-kpi"><span>Total customers</span><strong data-metric="total_customers">0</strong></article>
           <article class="analytics-kpi"><span>Active customers</span><strong data-metric="active_customers">0</strong></article>
-          <article class="analytics-kpi"><span>Open enquiries</span><strong data-metric="open_enquiries">0</strong></article>
+          <article class="analytics-kpi"><span>Open sales leads</span><strong data-metric="open_enquiries">0</strong></article>
+          <article class="analytics-kpi"><span>Win rate</span><strong id="win-rate">–</strong></article>
           <article class="analytics-kpi"><span>Meetings this month</span><strong data-metric="meetings_this_month">0</strong></article>
           <article class="analytics-kpi"><span>Calls this month</span><strong data-metric="calls_this_month">0</strong></article>
           <article class="analytics-kpi"><span>Pending follow-ups</span><strong data-metric="pending_followups">0</strong></article>
@@ -89,13 +90,15 @@
       </section>
       <section class="analytics-grid" aria-label="CRM metric charts">
         <article class="analytics-card"><h2>Customers by sales stage</h2><div class="analytics-chart" id="chart-customer-stages"></div></article>
-        <article class="analytics-card"><h2>Enquiries by status</h2><div class="analytics-chart" id="chart-enquiry-status"></div></article>
-        <article class="analytics-card"><h2>Enquiries by priority</h2><div class="analytics-chart" id="chart-enquiry-priority"></div></article>
+        <article class="analytics-card"><h2>Sales leads by stage</h2><div class="analytics-chart" id="chart-enquiry-status"></div></article>
+        <article class="analytics-card"><h2>Sales leads by priority</h2><div class="analytics-chart" id="chart-enquiry-priority"></div></article>
+        <article class="analytics-card"><h2>Open leads by qualification</h2><div class="analytics-chart" id="chart-lead-qualification"></div></article>
+        <article class="analytics-card"><h2>Closed opportunities by outcome</h2><div class="analytics-chart" id="chart-lead-outcome"></div><p id="win-rate-note" class="chart-footnote"></p></article>
         <article class="analytics-card"><h2>Pipeline value by sales stage</h2><div class="analytics-chart" id="chart-pipeline"></div></article>
         <article class="analytics-card analytics-card-wide"><h2>Activity volume over time</h2><div class="chart-legend"><span>Meetings</span><span>Calls</span><span>Follow-ups</span></div><div class="analytics-chart" id="chart-activity"></div></article>
         <article class="analytics-card"><h2>Follow-up status</h2><div class="analytics-chart" id="chart-followups"></div><p id="followup-due-summary" class="chart-footnote"></p></article>
       </section>
-      <section class="analytics-summary"><span>Total estimated enquiry value</span><strong id="total-enquiry-value">0</strong></section>
+      <section class="analytics-summary"><span>Total estimated sales lead value</span><strong id="total-enquiry-value">0</strong></section>
       <p id="analytics-error" class="analytics-error" role="alert" hidden></p>
     </main>
       </div>

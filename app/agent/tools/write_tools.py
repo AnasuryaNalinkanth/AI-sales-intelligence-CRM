@@ -5,7 +5,7 @@ from langchain_core.tools import StructuredTool
 from langgraph.types import interrupt
 from sqlalchemy import select
 
-from app.models import Call, FollowUp, Meeting
+from app.models import Call, FollowUp, Meeting, SalesEnquiry
 
 from app.schemas.agent import AgentActionName
 from app.schemas.follow_up import FollowUpStatus
@@ -13,12 +13,15 @@ from app.schemas.meeting import MeetingStatus
 
 from .action_schemas import (
     ApplyEnrichmentProposal,
+    CloseOpportunityInput,
+    CloseOpportunityProposal,
     CompleteFollowupProposal,
     CreateFollowupProposal,
     CreateMeetingTaskInput,
     CreateMeetingProposal,
     RecordCallResultProposal,
     ScheduleCallProposal,
+    UpdateLeadQualificationProposal,
 )
 from .context import AgentToolContext
 from .time_grounding import ground_meeting_time
@@ -535,7 +538,98 @@ def build_action_proposal_tools(
             data.model_dump(mode="json"),
         )
 
+    def _lead_state_error(enquiry_id: int, *, require_ready: bool) -> str | None:
+        # Early, read-only check; execution re-checks under a row lock after approval.
+        lead = db.scalar(
+            select(SalesEnquiry).where(
+                SalesEnquiry.enquiry_id == enquiry_id,
+                SalesEnquiry.organization_id == context.organization_id,
+            )
+        )
+        if lead is None:
+            return _unknown_reference("sales lead")
+        if lead.outcome is not None:
+            return (
+                '{"error":{"code":"opportunity_closed","message":"This opportunity is '
+                f'already closed as {lead.outcome}; it cannot be changed."' + "}}"
+            )
+        if require_ready and lead.qualification_status != "ready":
+            return (
+                '{"error":{"code":"opportunity_not_active","message":"Only a lead '
+                'qualified as ready can be closed. No proposal was created."}}'
+            )
+        return None
+
+    def update_lead_qualification(
+        customer_id: int,
+        enquiry_id: int,
+        qualification_status: Literal["ready", "not_ready"],
+        qualification_reason: str | None = None,
+    ) -> str:
+        """Propose setting a retrieved sales lead's qualification to ready or not_ready.
+
+        Only when the user explicitly states the decision; never infer it. Qualification is
+        not an outcome: use close_opportunity for won/lost. Approval is always required.
+        """
+        data = UpdateLeadQualificationProposal.model_validate(
+            {
+                "customer_id": customer_id,
+                "enquiry_id": enquiry_id,
+                "qualification_status": qualification_status,
+                "qualification_reason": qualification_reason,
+            }
+        )
+        invalid = _validate_known_references(
+            context, customer_id=data.customer_id, enquiry_id=data.enquiry_id
+        ) or _lead_state_error(data.enquiry_id, require_ready=False)
+        if invalid:
+            return invalid
+        return _prepare("update_lead_qualification", data.model_dump(mode="json"))
+
+    def close_opportunity(
+        customer_id: int,
+        enquiry_id: int,
+        outcome: Literal["won", "lost"],
+        loss_reason: str | None = None,
+    ) -> str:
+        """Propose closing a retrieved, Ready, open opportunity as won or lost.
+
+        Only when the user explicitly states the outcome; never infer it. A lost outcome
+        needs the user's loss reason. Approval is always required; closing cannot be undone.
+        """
+        if outcome == "lost" and not (loss_reason or "").strip():
+            return (
+                '{"error":{"code":"loss_reason_required",'
+                '"message":"Ask the user for the loss reason before proposing a lost outcome."}}'
+            )
+        data = CloseOpportunityProposal.model_validate(
+            {
+                "customer_id": customer_id,
+                "enquiry_id": enquiry_id,
+                "outcome": outcome,
+                "loss_reason": loss_reason,
+            }
+        )
+        invalid = _validate_known_references(
+            context, customer_id=data.customer_id, enquiry_id=data.enquiry_id
+        ) or _lead_state_error(data.enquiry_id, require_ready=True)
+        if invalid:
+            return invalid
+        return _prepare("close_opportunity", data.model_dump(mode="json"))
+
     return [
+        StructuredTool.from_function(
+            func=update_lead_qualification,
+            name="update_lead_qualification",
+            description=update_lead_qualification.__doc__,
+            args_schema=UpdateLeadQualificationProposal,
+        ),
+        StructuredTool.from_function(
+            func=close_opportunity,
+            name="close_opportunity",
+            description=close_opportunity.__doc__,
+            args_schema=CloseOpportunityInput,
+        ),
         StructuredTool.from_function(
             func=apply_enrichment,
             name="apply_enrichment",

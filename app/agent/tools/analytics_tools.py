@@ -71,7 +71,7 @@ def build_analytics_tools(
         start_date: date | None = None,
         end_date: date | None = None,
     ) -> str:
-        """Retrieve deterministic, pre-calculated CRM overview, pipeline, enquiry, activity and follow-up analytics."""
+        """Retrieve deterministic, pre-calculated CRM overview, pipeline, sales lead (qualification, won/lost outcome, win rate), activity and follow-up analytics."""
 
         session, owns_session = get_session()
 

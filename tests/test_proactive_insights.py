@@ -213,7 +213,7 @@ def test_scores_follow_the_documented_rules(agent_sessions: sessionmaker[Session
     # 0.6 * 25 + 0.4 * 100 = 55, plus 5 for a second signal (no next step).
     assert item.priority_score == 60
     assert (item.urgency, item.potential_impact) == ("low", "high")
-    assert item.reason.startswith("Strongest factor: Enquiry priority is urgent")
+    assert item.reason.startswith("Strongest factor: Sales lead priority is urgent")
 
 
 def test_scores_are_clamped_and_multiple_signals_rank_first(agent_sessions: sessionmaker[Session]) -> None:

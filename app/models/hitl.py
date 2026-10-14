@@ -60,7 +60,8 @@ class HitlActionProposal(Base):
     __table_args__ = (
         CheckConstraint(
             "action_type IN ('create_meeting', 'create_followup', 'schedule_call', "
-            "'record_call_result', 'complete_followup', 'apply_enrichment')",
+            "'record_call_result', 'complete_followup', 'apply_enrichment', "
+            "'update_lead_qualification', 'close_opportunity')",
             name="ck_hitl_action_proposals_action_type",
         ),
         CheckConstraint(

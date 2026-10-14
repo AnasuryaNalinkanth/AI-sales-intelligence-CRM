@@ -29,3 +29,17 @@ class CustomerActivityInput(CustomerIdInput):
         if self.start_date and self.end_date and self.start_date > self.end_date:
             raise ValueError("start_date must be on or before end_date")
         return self
+
+
+class FindSalesLeadsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    search: str | None = Field(
+        default=None, max_length=255, description="Optional product, requirement, customer or company text."
+    )
+    qualification_status: Literal["ready", "not_ready"] | None = Field(
+        default=None, description="Qualification of the lead; not an outcome."
+    )
+    outcome: Literal["open", "won", "lost"] | None = Field(
+        default=None, description="open = not yet closed; won/lost = closed opportunity outcome."
+    )

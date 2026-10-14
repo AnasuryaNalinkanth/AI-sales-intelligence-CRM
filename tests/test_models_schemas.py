@@ -65,7 +65,9 @@ def test_all_models_register_expected_tables() -> None:
         },
         "sales_enquiries": {
             "organization_id", "enquiry_id", "customer_id", "product", "enquiry_text", "priority", "status",
-            "estimated_value", "created_at", "updated_at",
+            "estimated_value", "created_at", "updated_at", "contact_id", "assigned_user_id",
+            "lead_source", "expected_close_date", "qualification_status", "qualification_reason",
+            "outcome", "closed_at", "loss_reason",
         },
         "meetings": {
             "organization_id", "meeting_id", "customer_id", "contact_id", "enquiry_id", "scheduled_at",
@@ -144,7 +146,7 @@ def test_foreign_keys_and_history_preserving_delete_rules() -> None:
     expected_foreign_keys = {
         "customers": {"company_id"},
         "contacts": {"customer_id"},
-        "sales_enquiries": {"customer_id"},
+        "sales_enquiries": {"customer_id", "contact_id", "assigned_user_id"},
         "meetings": {"customer_id", "contact_id", "enquiry_id"},
         "calls": {"customer_id", "contact_id", "enquiry_id"},
         "follow_ups": {"customer_id", "enquiry_id", "meeting_id", "call_id"},
@@ -234,6 +236,7 @@ def test_response_schemas_read_sqlalchemy_model_attributes() -> None:
         enquiry_text="Interested in an annual plan",
         priority="normal",
         status="open",
+        qualification_status="not_ready",
         estimated_value=Decimal("1250.50"),
         created_at=now,
         updated_at=now,

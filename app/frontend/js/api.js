@@ -356,3 +356,42 @@ export function getAnalytics(metric, params = {}) {
   const suffix = query.size ? `?${query.toString()}` : "";
   return request(`/analytics/${encodeURIComponent(metric)}${suffix}`);
 }
+
+// Sales leads keep the /enquiries API paths for compatibility.
+export function getLeads(params = {}) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") query.set(key, String(value));
+  }
+  const suffix = query.size ? `?${query.toString()}` : "";
+  return request(`/enquiries${suffix}`);
+}
+
+export function getLeadAssignees() {
+  return request("/enquiries/assignees");
+}
+
+export function createLead(payload) {
+  return request("/enquiries", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function updateLead(enquiryId, payload) {
+  return request(`/enquiries/${encodeURIComponent(enquiryId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateLeadQualification(enquiryId, payload) {
+  return request(`/enquiries/${encodeURIComponent(enquiryId)}/qualification`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function closeOpportunity(enquiryId, payload) {
+  return request(`/enquiries/${encodeURIComponent(enquiryId)}/close`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}

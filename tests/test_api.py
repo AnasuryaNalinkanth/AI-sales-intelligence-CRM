@@ -242,7 +242,7 @@ def test_dashboard_needs_attention_panel_renders_the_api_response_read_only() ->
     assert 'element("span", "attention-reason-detail", reason.detail)' in block
     assert "/customer?customer_id=${encodeURIComponent(item.customer_id)}" in block
     assert "error?.status === 401" in block
-    assert "No open enquiries need attention right now." in block
+    assert "No open sales leads need attention right now." in block
     # Read-only: no writes, no other endpoints, no example data.
     for forbidden in ("method:", "moveWorkspaceActivity", "fetch(", "POST"):
         assert forbidden not in block, forbidden
@@ -267,7 +267,7 @@ def test_dashboard_separates_customer_level_work_and_scopes_the_overdue_headline
     assert "item.customer_level_oldest_overdue_due_at" in block
     assert "item.customer_level_next_step_at" in block
     assert "item.customer_level_last_activity_at" in block
-    assert "Customer-level · not linked to this enquiry" in block
+    assert "Customer-level · not linked to this sales lead" in block
     assert "if (!rows.length) return null;" in block
     # Customer-level rows never reuse the enquiry reason markup or codes.
     assert "attention-reason" not in block and "dataset.reason" not in block

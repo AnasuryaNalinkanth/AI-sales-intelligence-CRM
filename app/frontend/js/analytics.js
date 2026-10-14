@@ -10,6 +10,8 @@ const chartTargets = {
   customerStages: document.querySelector("#chart-customer-stages"),
   enquiryStatus: document.querySelector("#chart-enquiry-status"),
   enquiryPriority: document.querySelector("#chart-enquiry-priority"),
+  leadQualification: document.querySelector("#chart-lead-qualification"),
+  leadOutcome: document.querySelector("#chart-lead-outcome"),
   pipeline: document.querySelector("#chart-pipeline"),
   activity: document.querySelector("#chart-activity"),
   followups: document.querySelector("#chart-followups"),
@@ -117,6 +119,13 @@ async function loadAnalytics() {
     renderBars(chartTargets.customerStages, customers.by_sales_stage);
     renderBars(chartTargets.enquiryStatus, enquiries.by_status);
     renderBars(chartTargets.enquiryPriority, enquiries.by_priority);
+    renderBars(chartTargets.leadQualification, enquiries.by_qualification);
+    renderBars(chartTargets.leadOutcome, enquiries.by_outcome);
+    const winRate = enquiries.win_rate_percent;
+    document.querySelector("#win-rate").textContent = winRate == null ? "–" : `${formatNumber(winRate, "0")}%`;
+    document.querySelector("#win-rate-note").textContent = winRate == null
+      ? displayValue(enquiries.win_rate_unavailable_reason, "")
+      : `Win rate: ${formatNumber(winRate, "0")}% of closed opportunities.`;
     renderBars(chartTargets.pipeline, pipeline.by_sales_stage, "value");
     renderActivity(chartTargets.activity, activities.over_time);
     renderBars(chartTargets.followups, followups.by_status);

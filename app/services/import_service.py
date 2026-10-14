@@ -26,7 +26,7 @@ from app.schemas.call import CallStatus
 from app.schemas.customer import CustomerStatus, SalesStage
 from app.schemas.follow_up import FollowUpStatus
 from app.schemas.meeting import MeetingCreate, MeetingStatus
-from app.schemas.sales_enquiry import EnquiryPriority, EnquiryStatus
+from app.schemas.sales_enquiry import EnquiryPriority, EnquiryStatus, LeadSource
 from app.schemas.validators import (
     normalize_utc_datetime,
     resolve_local_datetime,
@@ -452,6 +452,12 @@ def import_crm_workbook(
         (followups, "Follow_Ups", "followup_id", "status", get_args(FollowUpStatus)),
     ):
         _validate_enum_values(rows, sheet, record_id, field, values)
+    # lead_source is an optional column; rows without one are recorded as imported.
+    for row in enquiries:
+        row["lead_source"] = _optional(row, "lead_source") or "import"
+    _validate_enum_values(
+        enquiries, "Sales_Enquiries", "enquiry_id", "lead_source", get_args(LeadSource)
+    )
 
     meeting_schedules: list[tuple[datetime, str, int]] = []
     for row in meetings:
@@ -747,6 +753,7 @@ def import_crm_workbook(
                     enquiry_text=row["enquiry_text"],
                     priority=row["priority"],
                     status=row["status"],
+                    lead_source=row["lead_source"],
                     estimated_value=_decimal(
                         row.get("estimated_value")
                     ),

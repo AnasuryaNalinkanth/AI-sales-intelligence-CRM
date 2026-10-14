@@ -347,7 +347,7 @@ def test_ordering_is_rule_based_and_deterministic(agent_sessions: sessionmaker[S
     assert first == second
     assert [item.enquiry_id for item in limited.items] == expected[:2]
     assert limited.needing_attention == 6
-    assert first.ordering[0].startswith("Enquiries with an overdue follow-up")
+    assert first.ordering[0].startswith("Sales leads with an overdue follow-up")
 
 
 def test_query_count_does_not_grow_with_enquiries(

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Register a customer, company, primary contact, and sales enquiry.">
+    <meta name="description" content="Register a customer, company, primary contact, and sales lead.">
     <title>Register Customer | SalesDesk</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%234338ca'/%3E%3Ctext x='16' y='22' font-family='Segoe UI,Arial' font-size='18' font-weight='700' fill='white' text-anchor='middle'%3ES%3C/text%3E%3C/svg%3E">
     <script src="/static/js/theme-init.js"></script>
@@ -24,7 +24,7 @@
       <div class="page-intro">
         <div>
           <h1>Register a customer</h1>
-          <p>Create the customer, their company, a primary contact and the first sales enquiry in one step.</p>
+          <p>Create the customer, their company, a primary contact and the first sales lead in one step.</p>
         </div>
       </div>
 
@@ -106,20 +106,23 @@
           <section class="form-section" aria-labelledby="enquiry-section-title">
             <div class="form-section-heading">
               <span class="section-number">04</span>
-              <div><h2 id="enquiry-section-title">Initial sales enquiry</h2><p>Capture the opportunity that started the conversation.</p></div>
+              <div><h2 id="enquiry-section-title">Initial sales lead</h2><p>Capture the opportunity that started the conversation.</p></div>
             </div>
             <div class="form-grid">
               <label class="field field-wide">Product
                 <input name="product" maxlength="255" placeholder="Product or service of interest">
               </label>
-              <label class="field field-wide"><span>Enquiry details <span class="required-mark">*</span></span>
+              <label class="field field-wide"><span>Requirements and notes <span class="required-mark">*</span></span>
                 <textarea name="enquiry_text" rows="4" required placeholder="What is the customer looking for?"></textarea>
               </label>
               <label class="field">Priority
                 <select name="priority"><option value="low">Low</option><option value="medium">Medium</option><option value="normal" selected>Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select>
               </label>
-              <label class="field">Enquiry status
+              <label class="field">Pipeline stage
                 <select name="enquiry_status"><option value="open">Open</option><option value="in_progress">In progress</option><option value="converted">Converted</option><option value="closed">Closed</option><option value="lost">Lost</option></select>
+              </label>
+              <label class="field">Lead source
+                <select name="lead_source"><option value="">Not specified</option><option value="website">Website</option><option value="referral">Referral</option><option value="campaign">Campaign</option><option value="manual">Manual entry</option><option value="other">Other</option></select>
               </label>
               <label class="field field-half">Estimated value
                 <div class="input-prefix"><span aria-hidden="true">$</span><input name="estimated_value" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00"></div>
@@ -140,7 +143,7 @@
               <li>A customer record with its status and sales stage</li>
               <li>The company, shared by all of its customers</li>
               <li>A primary contact</li>
-              <li>The first sales enquiry, linked to all of the above</li>
+              <li>The first sales lead (Not Ready until you qualify it), linked to all of the above</li>
             </ul>
           </div>
           <div id="registration-success" class="success-card" role="status" hidden>

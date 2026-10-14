@@ -76,6 +76,10 @@ def create_app(app_settings: Settings = settings) -> FastAPI:
     def customer_intelligence_page() -> FileResponse:
         return FileResponse(FRONTEND_DIR / "customer.html")
 
+    @application.get("/leads", include_in_schema=False)
+    def sales_leads_page() -> FileResponse:
+        return FileResponse(FRONTEND_DIR / "leads.html")
+
     @application.get("/analytics", include_in_schema=False)
     def analytics_dashboard_page() -> FileResponse:
         return FileResponse(FRONTEND_DIR / "analytics.html")

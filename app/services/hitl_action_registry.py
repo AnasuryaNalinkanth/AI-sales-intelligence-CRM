@@ -13,12 +13,14 @@ from app.models import Call, Contact, Customer, FollowUp, Meeting, SalesEnquiry
 from app.schemas.agent import AgentActionName, AgentTaskFormChoice, AgentTaskFormField
 from app.agent.tools.action_schemas import (
     ApplyEnrichmentProposal,
+    CloseOpportunityProposal,
     CompleteFollowupProposal,
     CreateFollowupProposal,
     CreateMeetingTaskInput,
     CreateMeetingProposal,
     RecordCallResultProposal,
     ScheduleCallProposal,
+    UpdateLeadQualificationProposal,
 )
 from app.schemas.validators import (
     AmbiguousLocalTimeError,
@@ -167,6 +169,31 @@ ACTION_REGISTRY: dict[AgentActionName, ActionDefinition] = {
         ),
         frozenset({"customer_id"}),
     ),
+    "update_lead_qualification": ActionDefinition(
+        UpdateLeadQualificationProposal,
+        (
+            FormField("customer_id", "Customer", "record", True, selector="customer"),
+            FormField("enquiry_id", "Sales lead", "record", True, selector="enquiry"),
+            FormField("qualification_status", "Qualification", "select", True),
+            FormField("qualification_reason", "Reason", "textarea"),
+        ),
+        frozenset({"customer_id", "enquiry_id", "qualification_status"}),
+    ),
+    "close_opportunity": ActionDefinition(
+        CloseOpportunityProposal,
+        (
+            FormField("customer_id", "Customer", "record", True, selector="customer"),
+            FormField("enquiry_id", "Opportunity", "record", True, selector="enquiry"),
+            FormField("outcome", "Outcome", "select", True),
+            FormField(
+                "loss_reason",
+                "Loss reason",
+                "textarea",
+                help_text="Required when the outcome is Lost.",
+            ),
+        ),
+        frozenset({"customer_id", "enquiry_id", "outcome"}),
+    ),
 }
 
 _SELECTORS: dict[str, tuple[type[Any], str, str]] = {
@@ -219,6 +246,10 @@ def validate_operation(
     for group in definition.required_any:
         if not any(values.get(field) not in (None, "") for field in group):
             missing.append(" or ".join(group))
+    if action == "close_opportunity" and values.get("outcome") == "lost" and not values.get(
+        "loss_reason"
+    ):
+        missing.append("loss_reason")
     if action == "create_meeting" and values.get("scheduled_timezone"):
         try:
             validate_timezone_name(values["scheduled_timezone"])
@@ -311,6 +342,16 @@ def form_fields(
             choices = [
                 AgentTaskFormChoice(id=value, label=value.title())
                 for value in ("low", "medium", "normal", "high", "urgent")
+            ]
+        elif item.name == "qualification_status":
+            choices = [
+                AgentTaskFormChoice(id="ready", label="Ready"),
+                AgentTaskFormChoice(id="not_ready", label="Not Ready"),
+            ]
+        elif item.name == "outcome":
+            choices = [
+                AgentTaskFormChoice(id="won", label="Won"),
+                AgentTaskFormChoice(id="lost", label="Lost"),
             ]
         elif item.name == "scheduled_time_occurrence":
             choices = [

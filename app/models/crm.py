@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -200,6 +201,22 @@ class SalesEnquiry(Base):
             "status IN ('open', 'in_progress', 'converted', 'closed', 'lost')",
             name="ck_sales_enquiries_status",
         ),
+        CheckConstraint(
+            "qualification_status IN ('ready', 'not_ready')",
+            name="ck_sales_enquiries_qualification",
+        ),
+        CheckConstraint(
+            "lead_source IN ('website', 'referral', 'campaign', 'manual', 'import', 'other')",
+            name="ck_sales_enquiries_lead_source",
+        ),
+        # Outcome is separate from qualification: a closed lead always has its timestamp,
+        # and only a lost one carries a loss reason.
+        CheckConstraint(
+            "(outcome IS NULL AND closed_at IS NULL AND loss_reason IS NULL)"
+            " OR (outcome = 'won' AND closed_at IS NOT NULL AND loss_reason IS NULL)"
+            " OR (outcome = 'lost' AND closed_at IS NOT NULL AND loss_reason IS NOT NULL)",
+            name="ck_sales_enquiries_outcome",
+        ),
         Index("ix_sales_enquiries_organization_customer", "organization_id", "customer_id"),
         ForeignKeyConstraint(
             ["organization_id", "customer_id"],
@@ -219,6 +236,31 @@ class SalesEnquiry(Base):
     priority: Mapped[str] = mapped_column(String(50), nullable=False, default="normal", index=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="open", index=True)
     estimated_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    contact_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "contacts.contact_id",
+            ondelete="SET NULL",
+            name="fk_sales_enquiries_contact_id_contacts",
+        ),
+        index=True,
+    )
+    assigned_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "users.user_id",
+            ondelete="SET NULL",
+            name="fk_sales_enquiries_assigned_user_id_users",
+        ),
+        index=True,
+    )
+    lead_source: Mapped[str | None] = mapped_column(String(50))
+    expected_close_date: Mapped[date | None] = mapped_column(Date)
+    qualification_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="not_ready", server_default="not_ready", index=True
+    )
+    qualification_reason: Mapped[str | None] = mapped_column(Text)
+    outcome: Mapped[str | None] = mapped_column(String(10), index=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    loss_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
     )
@@ -229,6 +271,8 @@ class SalesEnquiry(Base):
     customer: Mapped[Customer] = relationship(
         back_populates="sales_enquiries", foreign_keys=[customer_id]
     )
+    contact: Mapped[Contact | None] = relationship(foreign_keys=[contact_id])
+    assigned_user: Mapped[User | None] = relationship(foreign_keys=[assigned_user_id])
     meetings: Mapped[list["Meeting"]] = relationship(back_populates="enquiry")
     calls: Mapped[list["Call"]] = relationship(back_populates="enquiry")
     followups: Mapped[list["FollowUp"]] = relationship(back_populates="enquiry")

@@ -38,11 +38,11 @@ PRIORITY_ORDER = {"urgent": 0, "high": 1, "medium": 2, "normal": 2, "low": 3}
 # and failed records are not evidence of contact.
 COUNTED_CALL_STATUSES = ("completed", "attempted", "missed")
 ATTENTION_ORDERING = [
-    "Enquiries with an overdue follow-up first.",
-    "Then enquiries with no counted activity within the inactivity threshold.",
+    "Sales leads with an overdue follow-up first.",
+    "Then sales leads with no counted activity within the inactivity threshold.",
     "Then by priority: urgent, high, medium/normal, low.",
     "Then the longest time since activity first.",
-    "Ties are broken by enquiry ID, oldest first.",
+    "Ties are broken by sales lead ID, oldest first.",
 ]
 
 
@@ -336,7 +336,7 @@ def get_attention_queue(
             measured = (
                 f"last counted activity on {last_activity.date().isoformat()}"
                 if last_activity
-                else f"no counted activity since the enquiry was created on {created_at.date().isoformat()}"
+                else f"no counted activity since the sales lead was created on {created_at.date().isoformat()}"
             )
             reasons.append(
                 AttentionReason(

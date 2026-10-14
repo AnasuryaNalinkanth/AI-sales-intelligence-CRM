@@ -54,6 +54,7 @@ export function buildRegistrationPayload(formData) {
       enquiry_text: String(formData.get("enquiry_text") ?? "").trim(),
       priority: formData.get("priority"),
       status: formData.get("enquiry_status"),
+      lead_source: formValue(formData, "lead_source"),
       estimated_value: estimatedValue,
     },
   };
@@ -65,8 +66,8 @@ function renderSuccess(result) {
   const details = [
     ["Customer ID", result.customer?.customer_id],
     ["Company", result.company?.company_name],
-    ["Enquiry", result.sales_enquiry?.product || result.sales_enquiry?.enquiry_text],
-    ["Enquiry status", result.sales_enquiry?.status],
+    ["Sales lead", result.sales_enquiry?.product || result.sales_enquiry?.enquiry_text],
+    ["Lead stage", result.sales_enquiry?.status],
   ];
   for (const [label, value] of details) {
     const row = element("div");

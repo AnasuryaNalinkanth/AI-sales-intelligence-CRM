@@ -223,7 +223,7 @@ def test_interrupted_upgrade_resumes_and_preserves_data(mysql_conn: Connection, 
     mysql_conn.commit()
     assert mysql_conn.scalar(text("SELECT version_num FROM alembic_version")) == "20261013_0012"
 
-    _alembic(mysql_conn, "upgrade", "head")
+    _alembic(mysql_conn, "upgrade", "20261013_0013")
     _assert_upgraded(mysql_conn, before)
 
 
@@ -231,7 +231,7 @@ def test_interrupted_upgrade_resumes_and_preserves_data(mysql_conn: Connection, 
 def test_downgrade_refuses_a_second_tenant_then_restores_0012(mysql_conn: Connection) -> None:
     _alembic(mysql_conn, "upgrade", "20261013_0012")
     before = _seed_0012(mysql_conn)
-    _alembic(mysql_conn, "upgrade", "head")
+    _alembic(mysql_conn, "upgrade", "20261013_0013")
 
     mysql_conn.execute(text("INSERT INTO organizations (name, slug) VALUES ('Other', 'other')"))
     mysql_conn.commit()
@@ -257,5 +257,5 @@ def test_downgrade_refuses_a_second_tenant_then_restores_0012(mysql_conn: Connec
         )
     )
     # Upgrading again from the downgraded state works.
-    _alembic(mysql_conn, "upgrade", "head")
+    _alembic(mysql_conn, "upgrade", "20261013_0013")
     _assert_upgraded(mysql_conn, before)

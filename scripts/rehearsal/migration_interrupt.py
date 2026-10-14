@@ -159,7 +159,7 @@ def resume(url: URL) -> None:
     from alembic import command
     from alembic.config import Config
 
-    command.upgrade(Config(str(ROOT / "alembic.ini")), "head")
+    command.upgrade(Config(str(ROOT / "alembic.ini")), TARGET_REVISION)
 
     engine = create_engine(url)
     try:

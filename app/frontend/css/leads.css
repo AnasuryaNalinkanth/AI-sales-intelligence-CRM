@@ -1,0 +1,64 @@
+/* Sales leads: filter bar, lead rows, and the detail / qualification / close dialogs. */
+
+.leads-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); margin-bottom: var(--gap); padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-sm); }
+.leads-filters .field { width: 180px; }
+.leads-filters .leads-search { flex: 1 1 260px; width: auto; }
+.leads-scope, .leads-notice { margin-bottom: var(--gap); color: var(--text-2); font-size: var(--text-sm); }
+.leads-notice { padding: var(--space-2) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--success-soft); color: var(--success); }
+.leads-notice.is-error { border-color: var(--danger-border); background: var(--danger-soft); color: var(--danger); }
+.leads-count, .leads-status { color: var(--text-muted); font-size: var(--text-sm); }
+.leads-status { padding: var(--space-4) var(--card-pad); }
+
+.leads-list { margin: 0; padding: 0; list-style: none; }
+.lead-row { border-bottom: 1px solid var(--border); }
+.lead-row:last-child { border-bottom: 0; }
+.lead-row button { display: grid; width: 100%; grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr) auto; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--card-pad); border: 0; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.lead-row button:hover { background: var(--surface-2); }
+.lead-row button:focus-visible { outline: none; box-shadow: inset var(--focus-ring); }
+.lead-title { display: block; overflow: hidden; color: var(--text); font-size: var(--text-sm); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.lead-sub { display: block; overflow: hidden; color: var(--text-muted); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.lead-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-1); }
+.lead-row.is-closed .lead-title { color: var(--text-2); }
+
+.leads-pagination { display: flex; justify-content: flex-end; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--card-pad); border-top: 1px solid var(--border); color: var(--text-muted); font-size: var(--text-sm); }
+
+.leads-form-grid { padding: var(--space-5) 0; }
+#customer-picker { gap: 6px; }
+#customer-picker input, #customer-picker select { width: 100%; }
+.leads-detail-dialog { width: min(720px, calc(100vw - 32px)); }
+.leads-detail { display: grid; gap: var(--space-4); padding: var(--space-5) 0; }
+.leads-detail .lead-badges { justify-content: flex-start; }
+.leads-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3) var(--space-4); margin: 0; }
+.leads-facts div { min-width: 0; }
+.leads-facts dt { color: var(--text-muted); font-size: var(--text-xs); }
+.leads-facts dd { margin: 0; overflow-wrap: anywhere; color: var(--text); font-size: var(--text-sm); }
+.leads-text { margin: 0; color: var(--text-2); font-size: var(--text-sm); overflow-wrap: anywhere; white-space: pre-wrap; }
+.leads-section-title { margin-bottom: var(--space-2); font-size: var(--text-sm); }
+.leads-activities { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.leads-activities li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); font-size: var(--text-sm); }
+.leads-closed-note { padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--neutral-soft); color: var(--text-2); font-size: var(--text-sm); }
+
+/* The qualification form is body content, not the dialog footer: its own grid spaces it, and the footer bar below stays the only .dialog-actions. */
+.leads-subform { display: grid; gap: var(--space-3); padding: var(--space-4) 0 var(--space-5); border-top: 1px solid var(--border); }
+.leads-subform-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--space-3); }
+.leads-saved { color: var(--success); font-size: var(--text-sm); }
+.leads-saved:empty { display: none; }
+.leads-choice { justify-self: start; }
+.leads-subform fieldset, .leads-fieldset { display: grid; gap: var(--space-3); margin: 0; padding: 0; border: 0; }
+.leads-subform legend, .leads-fieldset legend { margin-bottom: var(--space-2); color: var(--text); font-size: var(--text-sm); font-weight: 600; }
+.leads-choice input:focus-visible + span { box-shadow: var(--focus-ring); }
+#next-followup { padding: 0; }
+.leads-hint { margin: 0; color: var(--text-muted); font-size: var(--text-xs); }
+.leads-warning { margin: var(--space-4) 0; padding: var(--space-3) var(--space-4); border: 1px solid var(--warning); border-radius: var(--radius); background: var(--warning-soft); color: var(--text); font-size: var(--text-sm); }
+#close-form .field { margin-top: var(--space-4); }
+#close-form .form-alert, #lead-form .form-alert { margin-bottom: var(--space-4); }
+.leads-detail-actions { flex-wrap: wrap; }
+
+@media (max-width: 720px) {
+  .lead-row button { grid-template-columns: minmax(0, 1fr); }
+  .lead-badges { justify-content: flex-start; }
+  .leads-facts { grid-template-columns: minmax(0, 1fr); }
+  .leads-filters .field { width: 100%; }
+  .activity-form { padding: var(--space-4); }
+  .leads-subform-actions .button, .leads-detail-actions .button { flex: 1 1 auto; }
+}

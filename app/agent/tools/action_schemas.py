@@ -7,7 +7,12 @@ from decimal import Decimal
 
 from app.schemas.follow_up import FollowUpStatus
 from app.schemas.meeting import MeetingStatus
-from app.schemas.sales_enquiry import EnquiryPriority
+from app.schemas.sales_enquiry import (
+    EnquiryPriority,
+    OpportunityClose,
+    OpportunityOutcome,
+    QualificationStatus,
+)
 from app.schemas.validators import (
     MAX_TEXT_LENGTH,
     normalize_utc_datetime,
@@ -193,3 +198,29 @@ class ApplyEnrichmentProposal(BaseModel):
         default=None,
         ge=0,
     )
+
+
+class UpdateLeadQualificationProposal(ActionInput):
+    """Qualification (Ready / Not Ready) of an open lead. Never an opportunity outcome."""
+
+    customer_id: int = Field(ge=1)
+    enquiry_id: int = Field(ge=1)
+    qualification_status: QualificationStatus
+    qualification_reason: str | None = Field(default=None, max_length=MAX_TEXT_LENGTH)
+
+
+class CloseOpportunityInput(ActionInput):
+    """Outcome (Won / Lost) of an active opportunity. Never a qualification status."""
+
+    customer_id: int = Field(ge=1)
+    enquiry_id: int = Field(ge=1)
+    outcome: OpportunityOutcome
+    loss_reason: str | None = Field(default=None, max_length=MAX_TEXT_LENGTH)
+
+
+class CloseOpportunityProposal(CloseOpportunityInput):
+
+    @model_validator(mode="after")
+    def loss_reason_matches_outcome(self) -> "CloseOpportunityProposal":
+        OpportunityClose(outcome=self.outcome, loss_reason=self.loss_reason)
+        return self

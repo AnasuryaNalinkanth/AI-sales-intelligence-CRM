@@ -19,11 +19,13 @@ from app.agent.model import create_chat_model, map_ai_provider_exception
 from app.agent.tools import AgentToolContext
 from app.agent.tools.action_schemas import (
     ApplyEnrichmentProposal,
+    CloseOpportunityProposal,
     CompleteFollowupProposal,
     CreateFollowupProposal,
     CreateMeetingProposal,
     RecordCallResultProposal,
     ScheduleCallProposal,
+    UpdateLeadQualificationProposal,
 )
 from app.core.config import settings
 from app.core.exceptions import APIError
@@ -45,10 +47,15 @@ from app.schemas.call import CallCreate, CallResponse
 from app.schemas.customer import CustomerResponse
 from app.schemas.follow_up import FollowUpCreate, FollowUpResponse
 from app.schemas.meeting import MeetingCreate, MeetingResponse
-from app.schemas.sales_enquiry import SalesEnquiryResponse
+from app.schemas.sales_enquiry import (
+    LeadQualificationUpdate,
+    OpportunityClose,
+    SalesEnquiryResponse,
+)
 from app.models import HitlActionProposal, HitlExecutionAudit, User
 from app.services import (
     call_service,
+    enquiry_service,
     enrichment_service,
     followup_service,
     meeting_service,
@@ -76,6 +83,8 @@ WRITE_TOOL_NAMES: frozenset[AgentActionName] = frozenset(
         "record_call_result",
         "complete_followup",
         "apply_enrichment",
+        "update_lead_qualification",
+        "close_opportunity",
     }
 )
 
@@ -102,6 +111,12 @@ def _validate_proposal(
 
     if action == "apply_enrichment":
         return ApplyEnrichmentProposal.model_validate(payload).model_dump(mode="json")
+
+    if action == "update_lead_qualification":
+        return UpdateLeadQualificationProposal.model_validate(payload).model_dump(mode="json")
+
+    if action == "close_opportunity":
+        return CloseOpportunityProposal.model_validate(payload).model_dump(mode="json")
 
     return CompleteFollowupProposal.model_validate(payload).model_dump(mode="json")
 
@@ -890,6 +905,38 @@ def _execute_action(
 
         record_id = proposal.customer_id
         message = "CRM enrichment applied successfully."
+
+    elif record.action == "update_lead_qualification":
+        proposal = UpdateLeadQualificationProposal.model_validate(record.payload)
+        enquiry = enquiry_service.update_qualification(
+            db,
+            proposal.enquiry_id,
+            LeadQualificationUpdate(
+                qualification_status=proposal.qualification_status,
+                qualification_reason=proposal.qualification_reason,
+            ),
+            organization_id=organization_id,
+            customer_id=proposal.customer_id,
+            defer_commit=True,
+        )
+        serialized = SalesEnquiryResponse.model_validate(enquiry).model_dump(mode="json")
+        record_id = enquiry.enquiry_id
+        label = "Ready" if enquiry.qualification_status == "ready" else "Not Ready"
+        message = f"Sales lead #{record_id} qualification set to {label}."
+
+    elif record.action == "close_opportunity":
+        proposal = CloseOpportunityProposal.model_validate(record.payload)
+        enquiry = enquiry_service.close_opportunity(
+            db,
+            proposal.enquiry_id,
+            OpportunityClose(outcome=proposal.outcome, loss_reason=proposal.loss_reason),
+            organization_id=organization_id,
+            customer_id=proposal.customer_id,
+            defer_commit=True,
+        )
+        serialized = SalesEnquiryResponse.model_validate(enquiry).model_dump(mode="json")
+        record_id = enquiry.enquiry_id
+        message = f"Opportunity #{record_id} closed as {proposal.outcome.title()}."
 
     else:
         proposal = CompleteFollowupProposal.model_validate(

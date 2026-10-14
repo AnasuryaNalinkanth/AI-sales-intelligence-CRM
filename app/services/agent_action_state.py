@@ -159,6 +159,8 @@ def _is_agent_action(value: str) -> TypeGuard[AgentActionName]:
         "record_call_result",
         "complete_followup",
         "apply_enrichment",
+        "update_lead_qualification",
+        "close_opportunity",
     }
 
 

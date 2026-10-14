@@ -230,7 +230,7 @@ def _build_activity_timeline_from_records(
                     "activity_type": "enquiry",
                     "activity_date": activity_date,
                     "status": enquiry.get("status"),
-                    "title": enquiry.get("product") or "Sales enquiry",
+                    "title": enquiry.get("product") or "Sales lead",
                     "description": enquiry.get("enquiry_text"),
                 },
             )

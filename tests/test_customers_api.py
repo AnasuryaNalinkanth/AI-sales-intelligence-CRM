@@ -355,6 +355,9 @@ def test_imported_medium_priority_loads_in_customer_overview(
 
     assert overview.status_code == 200
     assert overview.json()["sales_enquiries"][0]["priority"] == "medium"
+    # Imported leads record their source and start Not Ready; nothing is inferred.
+    assert overview.json()["sales_enquiries"][0]["lead_source"] == "import"
+    assert overview.json()["sales_enquiries"][0]["qualification_status"] == "not_ready"
     assert overview.json()["calls"][0]["status"] == "missed"
     assert overview.json()["meetings"][0]["scheduled_at"] == "2026-10-02T10:00:00+04:00"
     assert overview.json()["meetings"][0]["scheduled_timezone"] == "Asia/Dubai"

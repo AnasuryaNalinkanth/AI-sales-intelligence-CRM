@@ -355,7 +355,30 @@ def get_enquiry_metrics(
         .select_from(SalesEnquiry)
         .where(*conditions)
     )
+    # Qualification describes open leads; Won/Lost are the outcomes of closed ones.
+    by_qualification = _count_by(
+        db,
+        SalesEnquiry.qualification_status,
+        conditions=[*conditions, SalesEnquiry.outcome.is_(None)],
+        value_column=SalesEnquiry.estimated_value,
+    )
+    by_outcome = _count_by(
+        db,
+        SalesEnquiry.outcome,
+        conditions=[*conditions, SalesEnquiry.outcome.is_not(None)],
+        value_column=SalesEnquiry.estimated_value,
+    )
+    outcome_counts = {item.label: item.count for item in by_outcome}
+    won = outcome_counts.get("won", 0)
+    win_rate = _decimal_percent(won, won + outcome_counts.get("lost", 0))
     return EnquiryMetrics(
+        by_qualification=by_qualification,
+        by_outcome=by_outcome,
+        win_rate_percent=win_rate,
+        win_rate_unavailable_reason=(
+            None if win_rate is not None
+            else "No opportunities created in the selected period have been closed as won or lost."
+        ),
         by_status=by_status,
         by_priority=by_priority,
         by_product=by_product,
@@ -501,7 +524,7 @@ def get_pipeline_metrics(
     conversion_reason = (
         None
         if conversion is not None
-        else "No sales enquiries exist in the selected period."
+        else "No sales leads exist in the selected period."
     )
 
     won_lost = db.execute(

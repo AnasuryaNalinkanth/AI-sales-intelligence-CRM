@@ -21,7 +21,13 @@ DEFAULT_POLICIES: dict[AgentActionName, AgentActionMode] = {
     "record_call_result": "approval_required",
     "complete_followup": "approval_required",
     "apply_enrichment": "approval_required",
+    "update_lead_qualification": "approval_required",
+    "close_opportunity": "approval_required",
 }
+# Qualification decisions and deal closures always need a human: never automatic.
+APPROVAL_ONLY_ACTIONS: frozenset[AgentActionName] = frozenset(
+    {"update_lead_qualification", "close_opportunity"}
+)
 
 
 def _is_policy_action(value: str) -> TypeGuard[AgentActionName]:
@@ -60,7 +66,12 @@ class ActionPolicyStore:
                         500,
                         "invalid_persisted_policy",
                     )
-                policies[override.action_type] = override.mode
+                policies[override.action_type] = (
+                    "approval_required"
+                    if override.mode == "automatic"
+                    and override.action_type in APPROVAL_ONLY_ACTIONS
+                    else override.mode
+                )
         return policies
 
     def get_policy(
@@ -94,6 +105,8 @@ class ActionPolicyStore:
                 500,
                 "invalid_persisted_policy",
             )
+        if override.mode == "automatic" and action in APPROVAL_ONLY_ACTIONS:
+            return "approval_required"
         return override.mode
 
     def set_policy(
@@ -116,6 +129,12 @@ class ActionPolicyStore:
                 "The selected policy mode is not supported.",
                 422,
                 "invalid_policy_mode",
+            )
+        if mode == "automatic" and action in APPROVAL_ONLY_ACTIONS:
+            raise APIError(
+                "This action always requires approval and cannot run automatically.",
+                422,
+                "automatic_not_allowed",
             )
 
         try:

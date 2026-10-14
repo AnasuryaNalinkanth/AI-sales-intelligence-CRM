@@ -68,6 +68,11 @@ class EnquiryMetrics(BaseModel):
     over_time: list[CountTimePoint]
     total_estimated_value: Decimal
     time_grain: TimeGrain
+    # Open leads by qualification (Ready / Not Ready) and closed opportunities by outcome.
+    by_qualification: list[DistributionMetric] = []
+    by_outcome: list[DistributionMetric] = []
+    win_rate_percent: Decimal | None = None
+    win_rate_unavailable_reason: str | None = None
 
 
 class ActivityMetrics(BaseModel):
