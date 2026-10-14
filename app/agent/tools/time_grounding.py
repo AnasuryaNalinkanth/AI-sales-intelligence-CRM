@@ -10,9 +10,10 @@ from datetime import time
 
 from app.core.config import settings
 
-# "17:45", "2026-10-20T16:00", "5:45 pm", "5pm", "5 p.m.", "at 5", "noon", "midnight".
+# "17:45", "2026-10-20T16:00", "5:45 pm", "5.45 pm", "545 pm", "5pm", "5 p.m.", "at 5",
+# "noon", "midnight". Dotted and compact forms count only with AM/PM.
 _TIME_MENTION = re.compile(
-    r"\b(?P<hour>\d{1,2})(?::(?P<minute>[0-5]\d))?\s*(?P<meridiem>[ap])\.?\s*m\b\.?"
+    r"\b(?P<hour>\d{1,2})(?:[:.]?(?P<minute>[0-5]\d))?\s*(?P<meridiem>[ap])\.?\s*m\b\.?"
     r"|(?:\b|(?<=\dT))(?P<hour24>\d{1,2}):(?P<minute24>[0-5]\d)\b"
     r"|\bat\s+(?P<hour_at>\d{1,2})\b(?!\s*(?:[:./-]|days?|hours?|hrs?|minutes?|mins?|weeks?|months?))"
     r"|\b(?P<word>noon|midday|midnight)\b",
@@ -78,3 +79,11 @@ def ground_meeting_time(
         label = _label(options[0])
         return None, f"Do you mean {label} AM or {label} PM?"
     return None, None
+
+
+def stated_meeting_time(message: str) -> tuple[time | None, str | None]:
+    """The single time written in a message as (time, AM/PM question); (None, None) for none or several."""
+    mentions = _mentions(message)
+    if len(mentions) != 1:
+        return None, None
+    return ground_meeting_time(message, mentions[0][-1])

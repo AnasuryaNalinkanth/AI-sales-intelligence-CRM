@@ -6,7 +6,7 @@ from typing import Any, Literal, TypeGuard
 from uuid import uuid4
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Interrupt
 from pydantic import ValidationError
@@ -39,6 +39,7 @@ from app.schemas.agent import (
     AgentActionResult,
     AgentChatRequest,
     AgentChatResponse,
+    AgentTaskInputRequest,
     AgentTaskResponse,
     AgentToolCall,
     PendingAgentAction,
@@ -52,7 +53,14 @@ from app.schemas.sales_enquiry import (
     OpportunityClose,
     SalesEnquiryResponse,
 )
-from app.models import HitlActionProposal, HitlExecutionAudit, User
+from app.models import (
+    Contact,
+    HitlActionProposal,
+    HitlExecutionAudit,
+    HitlTask,
+    SalesEnquiry,
+    User,
+)
 from app.services import (
     call_service,
     enquiry_service,
@@ -72,6 +80,13 @@ from app.services.agent_action_state import (
 )
 from app.services.hitl_policy import enforce_action_policy, get_action_policy
 from app.services.hitl_action_registry import validate_operation
+from app.services.meeting_draft import (
+    extract_draft_answers,
+    load_meeting_draft,
+    load_pending_meeting,
+    meeting_followup_intent,
+    unmatched_reference_questions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +102,10 @@ WRITE_TOOL_NAMES: frozenset[AgentActionName] = frozenset(
         "close_opportunity",
     }
 )
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
 
 def _is_agent_action(value: object) -> TypeGuard[AgentActionName]:
@@ -206,6 +225,26 @@ def _meeting_clarification_question(missing_fields: list[str]) -> str:
     return question
 
 
+def _draft_question(
+    db: Session,
+    values: dict[str, Any],
+    missing: list[str],
+    *,
+    organization_id: int,
+    extra: list[str] | None = None,
+) -> str:
+    """One message: missing schedule details first, then every unresolved contact or enquiry."""
+    schedule = [field for field in missing if field not in {"contact_id", "enquiry_id"}]
+    parts = [_meeting_clarification_question(schedule)] if schedule else []
+    for question in [
+        *(extra or []),
+        *unmatched_reference_questions(db, values, organization_id=organization_id),
+    ]:
+        if question not in parts:
+            parts.append(question)
+    return " ".join(parts)
+
+
 def _validate_proposal_customer_scope(
     db: Session,
     *,
@@ -276,6 +315,9 @@ def _validate_proposal_customer_scope(
 
 def _extract_text(messages: list[Any]) -> str:
     for message in reversed(messages):
+        # Replies before the latest user message are history, never this run's answer.
+        if isinstance(message, HumanMessage):
+            break
         if isinstance(message, AIMessage) and not message.tool_calls:
             content = message.content
 
@@ -378,6 +420,262 @@ def _read_tool_calls(messages: list[Any]) -> list[AgentToolCall]:
     return calls
 
 
+def _submit_meeting_draft(
+    db: Session,
+    task_id: str,
+    values: dict[str, Any],
+    *,
+    request: AgentChatRequest,
+    user_id: int,
+    organization_id: int,
+    tool_calls: list[AgentToolCall],
+    questions: list[str] | None = None,
+) -> AgentChatResponse:
+    """Merge values into the user's draft task; report its proposal or what is still needed."""
+    from app.services.hitl_task_service import (
+        _response as build_task_response,
+        _validate_partial_targets,
+        submit_task_input,
+    )
+
+    if questions:
+        # Something is ambiguous: keep what is clear, but never finalize yet.
+        task = pending_actions.get_task(db, task_id, user_id=user_id)
+        merged = {**task.collected_data["operations"][0]["values"], **values}
+        _, missing = validate_operation("create_meeting", merged)
+        _validate_partial_targets(db, merged, organization_id=organization_id)
+        task = pending_actions.update_task_inputs(
+            db,
+            task_id,
+            user_id=user_id,
+            collected_data={
+                "operations": [
+                    {
+                        "action": "create_meeting",
+                        "values": merged,
+                        "status": "collecting_information",
+                    }
+                ]
+            },
+        )
+        return AgentChatResponse(
+            response=_draft_question(
+                db, merged, missing, organization_id=organization_id, extra=questions
+            ),
+            customer_id=request.customer_id,
+            tool_calls=tool_calls,
+            clarification_task=build_task_response(db, task),
+        )
+    try:
+        task_response = submit_task_input(
+            db,
+            task_id,
+            AgentTaskInputRequest(operation_index=0, values=values),
+            user_id=user_id,
+            organization_id=organization_id,
+        )
+    except APIError as exc:
+        if exc.code not in {"schedule_conflict", "schedule_in_past"}:
+            raise
+        # submit_task_input kept the answers on the still-open draft.
+        suggestions = (exc.details or {}).get("suggestions")
+        return AgentChatResponse(
+            response=_action_failure_message(exc),
+            customer_id=request.customer_id,
+            tool_calls=tool_calls,
+            clarification_task=build_task_response(
+                db, pending_actions.get_task(db, task_id, user_id=user_id)
+            ),
+            schedule_alternatives=suggestions if isinstance(suggestions, list) else [],
+            schedule_reason="past" if exc.code == "schedule_in_past" else "conflict",
+        )
+    proposal = db.scalar(
+        select(HitlActionProposal).where(
+            HitlActionProposal.task_id == task_id,
+            HitlActionProposal.status == "pending",
+        )
+    )
+    if proposal is not None:
+        return AgentChatResponse(
+            response=(
+                f"I am ready to create meeting{_schedule_label(proposal.parameters)}. "
+                "Please confirm."
+            ),
+            customer_id=request.customer_id,
+            tool_calls=tool_calls,
+            pending_action=PendingAgentAction(
+                action_id=proposal.action_id,
+                action="create_meeting",
+                payload=proposal.parameters,
+            ),
+        )
+    operation = task_response.operations[0]
+    return AgentChatResponse(
+        response=_draft_question(
+            db, operation.values, operation.missing_fields, organization_id=organization_id
+        )
+        or task_response.message,
+        customer_id=request.customer_id,
+        tool_calls=tool_calls,
+        clarification_task=task_response,
+    )
+
+
+def _pending_action(proposal: HitlActionProposal) -> PendingAgentAction:
+    return PendingAgentAction(
+        action_id=proposal.action_id,
+        action="create_meeting",
+        payload=proposal.parameters,
+    )
+
+
+def _meeting_summary(db: Session, payload: dict[str, Any], *, organization_id: int) -> str:
+    """Every detail of a meeting proposal, named from this organization's records."""
+    parts = [f"Meeting{_schedule_label(payload)}"]
+    for model, field, label, name in (
+        (Contact, "contact_id", "contact", "name"),
+        (SalesEnquiry, "enquiry_id", "sales enquiry", "product"),
+    ):
+        record_id = payload.get(field)
+        record = (
+            db.scalar(
+                select(model).where(
+                    model.organization_id == organization_id,
+                    getattr(model, field) == record_id,
+                )
+            )
+            if record_id is not None
+            else None
+        )
+        parts.append(
+            f"{label} #{record_id} {getattr(record, name)}" if record is not None else f"no {label}"
+        )
+    parts.append(f"{payload['duration']} minutes" if payload.get("duration") else "default duration")
+    if payload.get("agenda"):
+        parts.append(f"agenda: {payload['agenda']}")
+    if payload.get("notes"):
+        parts.append(f"notes: {payload['notes']}")
+    return "; ".join(parts) + "."
+
+
+_UNRESOLVED_NAMES = {"contact_name": "contact_id", "enquiry_reference": "enquiry_id"}
+_CHOOSE_INTENT = (
+    'Say "change it to ..." to update the pending meeting, or "schedule another meeting ..." '
+    "to keep it and add a separate one."
+)
+
+
+def _amend_pending_meeting(
+    db: Session,
+    proposal: HitlActionProposal,
+    task_values: dict[str, Any],
+    *,
+    request: AgentChatRequest,
+    user_id: int,
+    organization_id: int,
+    tool_calls: list[AgentToolCall],
+    questions: list[str] | None = None,
+    intent: str | None = None,
+) -> AgentChatResponse:
+    """Replace the pending meeting proposal with its revision, after the same checks.
+
+    Details that resolved are applied even while a contact or enquiry name still needs
+    a choice; that name is kept on the task and asked about, and until it is settled the
+    proposal keeps its current contact or enquiry.
+    """
+    from app.services.hitl_task_service import _require_scheduling_availability
+
+    unresolved = {
+        name: task_values[name] for name in _UNRESOLVED_NAMES if task_values.get(name)
+    }
+    values = {key: value for key, value in task_values.items() if key not in _UNRESOLVED_NAMES}
+    for name in unresolved:
+        values[_UNRESOLVED_NAMES[name]] = proposal.parameters.get(_UNRESOLVED_NAMES[name])
+    payload, missing = validate_operation("create_meeting", values)
+    if payload is None:
+        return AgentChatResponse(
+            response=_draft_question(db, task_values, missing, organization_id=organization_id)
+            + " Your pending meeting proposal is unchanged.",
+            customer_id=request.customer_id,
+            tool_calls=tool_calls,
+            pending_action=_pending_action(proposal),
+        )
+    if payload.get("customer_id") != request.customer_id:
+        raise APIError(
+            "Write proposal cannot target a customer outside the active conversation scope.",
+            403,
+            "customer_scope_violation",
+        )
+    validate_customer_references(
+        db,
+        payload["customer_id"],
+        organization_id=organization_id,
+        contact_id=payload.get("contact_id"),
+        enquiry_id=payload.get("enquiry_id"),
+    )
+    enforce_action_policy(db, "create_meeting", organization_id=organization_id)
+    current = CreateMeetingProposal.model_validate(proposal.parameters)
+    revised = CreateMeetingProposal.model_validate(payload)
+    if intent != "amend" and (
+        _as_utc(revised.scheduled_at) != _as_utc(current.scheduled_at)
+        or revised.scheduled_timezone != current.scheduled_timezone
+    ):
+        # Moving a pending meeting needs a clear request; it may be a second meeting.
+        return AgentChatResponse(
+            response=(
+                f"Your pending meeting is{_schedule_label(proposal.parameters)}. Do you want to "
+                f"move it to {_schedule_label(payload).removeprefix(' for ')}, or schedule a "
+                f"separate meeting? {_CHOOSE_INTENT} Your pending meeting proposal is unchanged."
+            ),
+            customer_id=request.customer_id,
+            tool_calls=tool_calls,
+            pending_action=_pending_action(proposal),
+        )
+    try:
+        _require_scheduling_availability(
+            db, "create_meeting", payload, organization_id=organization_id
+        )
+    except APIError as exc:
+        if exc.code not in {"schedule_conflict", "schedule_in_past"}:
+            raise
+        return AgentChatResponse(
+            response=f"{_action_failure_message(exc)} Your pending meeting proposal is unchanged.",
+            customer_id=request.customer_id,
+            tool_calls=tool_calls,
+            pending_action=_pending_action(proposal),
+        )
+    record = pending_actions.supersede(
+        db, proposal.action_id, payload, user_id=user_id, unresolved=unresolved
+    )
+    summary = _meeting_summary(db, record.payload, organization_id=organization_id)
+    changed = record.action_id != proposal.action_id
+    question = (
+        _draft_question(db, task_values, [], organization_id=organization_id, extra=questions)
+        if unresolved or questions
+        else ""
+    )
+    if question:
+        head = "I updated the meeting proposal." if changed else "Your pending meeting proposal is unchanged."
+        response = (
+            f"{head} {summary} {question} You can approve this version now, or answer "
+            "and I will revise it."
+        )
+    elif changed:
+        response = f"I updated the meeting proposal. {summary} Please confirm this revised version."
+    else:
+        response = f"The pending meeting proposal already has these details. {summary} Please confirm."
+    return AgentChatResponse(
+        response=response,
+        customer_id=request.customer_id,
+        tool_calls=tool_calls,
+        pending_action=PendingAgentAction(
+            action_id=record.action_id,
+            action="create_meeting",
+            payload=record.payload,
+        ),
+    )
+
+
 def propose_or_answer(
     db: Session,
     request: AgentChatRequest,
@@ -399,12 +697,86 @@ def propose_or_answer(
         require_customer(db, request.customer_id, organization_id=organization_id)
         tool_context.remember_customer(request.customer_id)
 
+    draft_task: HitlTask | None = None
+    draft_values: dict[str, Any] = {}
+    if request.task_id is not None:
+        draft_task, draft_values = load_meeting_draft(
+            db,
+            str(request.task_id),
+            user_id=user_id,
+            organization_id=organization_id,
+            customer_id=request.customer_id,
+        )
+        tool_context.meeting_draft = draft_values
+        # load_meeting_draft rechecked these against this customer and organization.
+        if draft_values.get("contact_id") is not None:
+            tool_context.remember_contact(request.customer_id, draft_values["contact_id"])
+        if draft_values.get("enquiry_id") is not None:
+            tool_context.remember_enquiry(request.customer_id, draft_values["enquiry_id"])
+
+    amend_target: HitlActionProposal | None = None
+    # The pending proposal a separate new meeting leaves untouched.
+    kept_pending: HitlActionProposal | None = None
+    followup_intent = (
+        meeting_followup_intent(request.message) if request.pending_action_id is not None else None
+    )
+    if request.pending_action_id is not None:
+        # Always authorized first, whatever the message turns out to ask for.
+        amend_target, draft_values = load_pending_meeting(
+            db,
+            request.pending_action_id,
+            user_id=user_id,
+            organization_id=organization_id,
+            customer_id=request.customer_id,
+        )
+        if followup_intent == "unclear":
+            return AgentChatResponse(
+                response=(
+                    "Do you want to change your pending meeting, or schedule a separate one? "
+                    f"{_CHOOSE_INTENT} Your pending meeting proposal is unchanged."
+                ),
+                customer_id=request.customer_id,
+                tool_calls=[],
+                pending_action=_pending_action(amend_target),
+            )
+        if followup_intent == "new":
+            kept_pending, amend_target, draft_values = amend_target, None, {}
+    if amend_target is not None:
+        tool_context.meeting_draft = draft_values
+        # load_pending_meeting rechecked these against this customer and organization.
+        if draft_values.get("contact_id") is not None:
+            tool_context.remember_contact(request.customer_id, draft_values["contact_id"])
+        if draft_values.get("enquiry_id") is not None:
+            tool_context.remember_enquiry(request.customer_id, draft_values["enquiry_id"])
+
     prompt = request.message
 
     if request.customer_id is not None:
         prompt = (
             f"Selected CRM customer ID (use read tools to retrieve its facts): "
             f"{request.customer_id}\nUser request: {request.message}"
+        )
+    if draft_task is not None:
+        _, draft_missing = validate_operation("create_meeting", draft_values)
+        prompt = (
+            "Open meeting draft with details the user already gave (validated): "
+            f"{json.dumps(draft_values)}. Still missing: {', '.join(draft_missing) or 'nothing'}. "
+            "Call create_meeting with only the new details; the draft supplies the rest.\n"
+            f"{prompt}"
+        )
+    if kept_pending is not None:
+        prompt = (
+            "The user has another meeting proposal awaiting approval; it stays as it is. "
+            "This message asks for a separate meeting, so propose it on its own.\n"
+            f"{prompt}"
+        )
+    if amend_target is not None:
+        prompt = (
+            "Pending meeting proposal awaiting the user's approval (validated): "
+            f"{json.dumps(draft_values)}. If the user adds or changes meeting details, call "
+            "create_meeting with only those details; the proposal keeps the rest and the "
+            "revised version needs a new approval.\n"
+            f"{prompt}"
         )
     if request.timezone_name is not None:
         prompt = f"User's timezone (IANA): {request.timezone_name}\n{prompt}"
@@ -498,35 +870,73 @@ def propose_or_answer(
                 )
                 enforce_action_policy(db, action, organization_id=organization_id)
                 _, missing_fields = validate_operation(action, payload)
-                if not missing_fields:
+                raw_questions = interrupt_value.get("questions")
+                questions = [
+                    item for item in raw_questions or [] if isinstance(item, str)
+                ] if isinstance(raw_questions, list) else []
+                if not missing_fields and not questions:
                     raise APIError(
                         "A complete meeting must use the approval proposal flow.",
                         502,
                         "invalid_action_proposal",
                     )
-                task = pending_actions.create_task(
-                    db,
-                    user_id=user_id,
-                    action_type=action,
-                    collected_data={
-                        "operations": [
-                            {
-                                "action": action,
-                                "values": payload,
-                                "status": "collecting_information",
-                            }
-                        ]
-                    },
+                if amend_target is not None:
+                    lead = interrupt_value.get("question")
+                    return _amend_pending_meeting(
+                        db,
+                        amend_target,
+                        # The proposal supplies any schedule detail this reply left unclear.
+                        {**draft_values, **payload},
+                        request=request,
+                        user_id=user_id,
+                        organization_id=organization_id,
+                        tool_calls=_read_tool_calls(state.get("messages", [])),
+                        questions=[*([lead] if isinstance(lead, str) else []), *questions],
+                        intent=followup_intent,
+                    )
+                collected_data: dict[str, object] = {
+                    "operations": [
+                        {
+                            "action": action,
+                            "values": payload,
+                            "status": "collecting_information",
+                        }
+                    ]
+                }
+                # A resumed draft is updated in place so no second open task is left behind.
+                task = (
+                    pending_actions.update_task_inputs(
+                        db,
+                        draft_task.task_id,
+                        user_id=user_id,
+                        collected_data=collected_data,
+                    )
+                    if draft_task is not None
+                    else pending_actions.create_task(
+                        db,
+                        user_id=user_id,
+                        action_type=action,
+                        collected_data=collected_data,
+                    )
                 )
                 from app.services.hitl_task_service import _response as build_task_response
 
                 clarification_task: AgentTaskResponse = build_task_response(db, task)
+                # An AM/PM question replaces the generic schedule question.
+                lead = (
+                    interrupt_value["question"]
+                    if isinstance(interrupt_value.get("question"), str)
+                    else None
+                )
+                follow_up = _draft_question(
+                    db,
+                    payload,
+                    [] if lead else missing_fields,
+                    organization_id=organization_id,
+                    extra=questions,
+                )
                 return AgentChatResponse(
-                    response=(
-                        interrupt_value["question"]
-                        if isinstance(interrupt_value.get("question"), str)
-                        else _meeting_clarification_question(missing_fields)
-                    ),
+                    response=" ".join(part for part in (lead, follow_up) if part),
                     customer_id=request.customer_id,
                     tool_calls=_read_tool_calls(state.get("messages", [])),
                     clarification_task=clarification_task,
@@ -542,6 +952,29 @@ def propose_or_answer(
             )
 
             enforce_action_policy(db, action, organization_id=organization_id)
+            task_values = interrupt_value.get("task_values")
+            if amend_target is not None and action == "create_meeting" and isinstance(task_values, dict):
+                return _amend_pending_meeting(
+                    db,
+                    amend_target,
+                    task_values,
+                    request=request,
+                    user_id=user_id,
+                    organization_id=organization_id,
+                    tool_calls=_read_tool_calls(state.get("messages", [])),
+                    intent=followup_intent,
+                )
+            if draft_task is not None and action == "create_meeting" and isinstance(task_values, dict):
+                # The draft's own task becomes the proposal, through the task flow's checks.
+                return _submit_meeting_draft(
+                    db,
+                    draft_task.task_id,
+                    task_values,
+                    request=request,
+                    user_id=user_id,
+                    organization_id=organization_id,
+                    tool_calls=_read_tool_calls(state.get("messages", [])),
+                )
             if (
                 action != "create_meeting"
                 and get_action_policy(db, action, organization_id=organization_id) == "automatic"
@@ -565,18 +998,36 @@ def propose_or_answer(
                     tool_calls=_read_tool_calls(state.get("messages", [])),
                 )
 
-            pending = pending_actions.add(
-                db,
-                action,
-                payload,
-                thread_id,
-                user_id=user_id,
+            # Repeating the same request (e.g. "5:50 PM." again) reuses the identical
+            # pending proposal instead of queueing a duplicate for approval.
+            duplicate = db.scalar(
+                select(HitlActionProposal).where(
+                    HitlActionProposal.owner_user_id == user_id,
+                    HitlActionProposal.status == "pending",
+                    HitlActionProposal.payload_fingerprint == action_fingerprint(action, payload),
+                )
+            )
+            pending = (
+                duplicate
+                if duplicate is not None and _as_utc(duplicate.expires_at) > datetime.now(timezone.utc)
+                else pending_actions.add(
+                    db,
+                    action,
+                    payload,
+                    thread_id,
+                    user_id=user_id,
+                )
             )
 
+            still_pending = (
+                " Your earlier meeting proposal is still awaiting approval under Agent approvals."
+                if kept_pending is not None and kept_pending.action_id != pending.action_id
+                else ""
+            )
             return AgentChatResponse(
                 response=(
                     f"I am ready to {action.replace('_', ' ')}"
-                    f"{_schedule_label(payload)}. Please confirm."
+                    f"{_schedule_label(payload)}. Please confirm.{still_pending}"
                 ),
                 customer_id=request.customer_id,
                 tool_calls=_read_tool_calls(
@@ -591,6 +1042,26 @@ def propose_or_answer(
 
         messages = state.get("messages", [])
         conflict = tool_context.schedule_conflict
+        if amend_target is not None and conflict is not None:
+            options = [
+                f"{item['starts_at']} ({item['timezone']})"
+                for item in conflict.get("suggestions") or []
+                if isinstance(item, dict) and isinstance(item.get("starts_at"), str)
+            ]
+            reason = (
+                "That time has already passed."
+                if conflict.get("reason") == "past"
+                else "That time overlaps an existing scheduled activity."
+            )
+            return AgentChatResponse(
+                response=(
+                    f"{reason} Your pending meeting proposal is unchanged."
+                    + (f" Available alternatives: {'; '.join(options)}." if options else "")
+                ),
+                customer_id=request.customer_id,
+                tool_calls=_read_tool_calls(messages),
+                pending_action=_pending_action(amend_target),
+            )
         if (
             conflict is not None
             and get_action_policy(db, conflict["action"], organization_id=organization_id)
@@ -605,19 +1076,26 @@ def propose_or_answer(
                 tool_context=tool_context,
                 payload=conflict["values"],
             )
-            task = pending_actions.create_task(
-                db,
-                user_id=user_id,
-                action_type=conflict["action"],
-                collected_data={
-                    "operations": [
-                        {
-                            "action": conflict["action"],
-                            "values": conflict["values"],
-                            "status": "collecting_information",
-                        }
-                    ]
-                },
+            conflict_data: dict[str, object] = {
+                "operations": [
+                    {
+                        "action": conflict["action"],
+                        "values": conflict["values"],
+                        "status": "collecting_information",
+                    }
+                ]
+            }
+            task = (
+                pending_actions.update_task_inputs(
+                    db, draft_task.task_id, user_id=user_id, collected_data=conflict_data
+                )
+                if draft_task is not None and conflict["action"] == "create_meeting"
+                else pending_actions.create_task(
+                    db,
+                    user_id=user_id,
+                    action_type=conflict["action"],
+                    collected_data=conflict_data,
+                )
             )
             from app.services.hitl_task_service import _response as build_task_response
 
@@ -631,10 +1109,72 @@ def propose_or_answer(
                 schedule_reason=conflict.get("reason", "conflict"),
             )
 
+        if amend_target is not None and request.customer_id is not None:
+            answers, questions = extract_draft_answers(
+                db,
+                request.message,
+                draft_values,
+                organization_id=organization_id,
+                customer_id=request.customer_id,
+                timezone_name=request.timezone_name,
+            )
+            if answers or questions:
+                return _amend_pending_meeting(
+                    db,
+                    amend_target,
+                    {**draft_values, **answers},
+                    request=request,
+                    user_id=user_id,
+                    organization_id=organization_id,
+                    tool_calls=_read_tool_calls(messages),
+                    questions=questions,
+                    intent=followup_intent,
+                )
+            return AgentChatResponse(
+                response=_without_unconfirmed_change_claim(_extract_text(messages)),
+                customer_id=request.customer_id,
+                tool_calls=_read_tool_calls(messages),
+                pending_action=_pending_action(amend_target),
+            )
+
+        if draft_task is not None and request.customer_id is not None:
+            # The model made no meeting tool call; answers this message clearly states
+            # still reach the draft, through the same task validation and approval.
+            answers, questions = extract_draft_answers(
+                db,
+                request.message,
+                draft_values,
+                organization_id=organization_id,
+                customer_id=request.customer_id,
+                timezone_name=request.timezone_name,
+            )
+            if answers or questions:
+                return _submit_meeting_draft(
+                    db,
+                    draft_task.task_id,
+                    answers,
+                    request=request,
+                    user_id=user_id,
+                    organization_id=organization_id,
+                    tool_calls=_read_tool_calls(messages),
+                    questions=questions,
+                )
+            from app.services.hitl_task_service import _response as build_task_response
+
+            return AgentChatResponse(
+                response=_without_unconfirmed_change_claim(_extract_text(messages)),
+                customer_id=request.customer_id,
+                tool_calls=_read_tool_calls(messages),
+                # Still open, so the next message can keep completing it.
+                clarification_task=build_task_response(db, draft_task),
+            )
+
         return AgentChatResponse(
             response=_without_unconfirmed_change_claim(_extract_text(messages)),
             customer_id=request.customer_id,
             tool_calls=_read_tool_calls(messages),
+            # A separate request that produced nothing leaves the earlier proposal shown.
+            pending_action=_pending_action(kept_pending) if kept_pending is not None else None,
         )
 
     except APIError:

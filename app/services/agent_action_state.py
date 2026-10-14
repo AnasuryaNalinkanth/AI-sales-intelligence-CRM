@@ -10,6 +10,7 @@ from uuid import uuid4
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.core.exceptions import APIError
@@ -67,14 +68,36 @@ def transition_task(task: HitlTask, status: str, now: datetime) -> None:
     task.updated_at = now
 
 
-def _sync_task_status(db: Session, task: HitlTask, now: datetime) -> None:
-    proposal_statuses = set(
-        db.scalars(
-            select(HitlActionProposal.status).where(
-                HitlActionProposal.task_id == task.task_id
+def superseded_action_ids(db: Session, action_ids: list[str]) -> set[str]:
+    """Cancelled proposals that were replaced by a revision (not cancelled by a person)."""
+    if not action_ids:
+        return set()
+    return {
+        audit.action_id
+        for audit in db.scalars(
+            select(HitlActionAudit).where(
+                HitlActionAudit.action_id.in_(action_ids),
+                HitlActionAudit.event_type == "cancelled",
             )
-        ).all()
+        )
+        if isinstance(audit.details, dict) and audit.details.get("reason") == "superseded"
+    }
+
+
+def _sync_task_status(db: Session, task: HitlTask, now: datetime) -> None:
+    # SessionLocal has autoflush off; without this the query reads proposal statuses
+    # from before the caller's change and leaves the task stuck (e.g. "executing").
+    db.flush()
+    rows = db.execute(
+        select(HitlActionProposal.action_id, HitlActionProposal.status).where(
+            HitlActionProposal.task_id == task.task_id
+        )
+    ).all()
+    # A proposal replaced by its revision is history, not the task's outcome.
+    superseded = superseded_action_ids(
+        db, [action_id for action_id, status in rows if status == "cancelled"]
     )
+    proposal_statuses = {status for action_id, status in rows if action_id not in superseded}
     if "executing" in proposal_statuses:
         target = "executing"
     elif "pending" in proposal_statuses:
@@ -247,6 +270,20 @@ def _expire_pending(db: Session, now: datetime) -> None:
         _write_audit(db, action_id=proposal.action_id, event_type="expired")
 
 
+def _set_unresolved(task: HitlTask, unresolved: dict[str, str] | None) -> bool:
+    """Store (or clear) names awaiting a choice on the task; True when anything changed."""
+    data = dict(task.collected_data or {})
+    if (data.get("pending_amendment") or None) == (unresolved or None):
+        return False
+    if unresolved:
+        data["pending_amendment"] = dict(unresolved)
+    else:
+        data.pop("pending_amendment", None)
+    task.collected_data = data
+    flag_modified(task, "collected_data")
+    return True
+
+
 def _expire_incomplete_tasks(db: Session, now: datetime) -> None:
     cutoff = now - timedelta(hours=24)
     tasks = list(
@@ -417,6 +454,8 @@ class PendingActionStore:
                     "invalid_task_transition",
                 )
             task.collected_data = collected_data
+            # Callers often edit the loaded JSON in place, so an equal value must still be saved.
+            flag_modified(task, "collected_data")
             transition_task(task, "collecting_information", now)
             task.expires_at = now + timedelta(hours=24)
             db.commit()
@@ -797,6 +836,131 @@ class PendingActionStore:
             rollback_failed_transaction(db)
             raise APIError(
                 "The automatic action could not be started.",
+                500,
+                "hitl_persistence_error",
+            ) from exc
+
+    def expire_overdue(self, db: Session) -> None:
+        """Mark overdue pending proposals expired, as claim() does before reporting 410."""
+        _expire_pending(db, datetime.now(timezone.utc))
+        db.commit()
+
+    def supersede(
+        self,
+        db: Session,
+        action_id: str,
+        payload: dict[str, object],
+        *,
+        user_id: int,
+        unresolved: dict[str, str] | None = None,
+    ) -> PendingActionRecord:
+        """Replace the owner's pending proposal with a revised one that needs its own approval.
+
+        The revision gets a new action ID and fingerprint, so approving the old ID can
+        never execute the revised payload. Returns the existing proposal when nothing changed.
+        unresolved holds contact/enquiry names still awaiting the user's choice; they are
+        kept on the task for the next message and never become part of a payload.
+        """
+        now = datetime.now(timezone.utc)
+        try:
+            proposal = db.get(HitlActionProposal, action_id)
+            if proposal is None or proposal.owner_user_id != user_id:
+                raise APIError("Pending action not found.", 404, "action_not_found")
+            if proposal.status == "pending" and _utc(proposal.expires_at) <= now:
+                _expire_pending(db, now)
+                db.commit()
+                raise APIError("Pending action has expired.", 410, "action_expired")
+            if proposal.status == "expired":
+                raise APIError("Pending action has expired.", 410, "action_expired")
+            if proposal.status != "pending":
+                raise APIError(
+                    "Pending action is already being processed or is no longer available.",
+                    409,
+                    "action_already_processed",
+                )
+            action = proposal.action_type
+            fingerprint = action_fingerprint(action, payload)  # type: ignore[arg-type]
+            task = db.get(HitlTask, proposal.task_id)
+            if fingerprint == proposal.payload_fingerprint:
+                if task is not None and _set_unresolved(task, unresolved):
+                    db.commit()
+                return _record(proposal, actor_user_id=user_id)
+            # Compare-and-set, like claim(): a concurrent approval or another revision
+            # that already moved this proposal makes this update match no row.
+            result = db.execute(
+                update(HitlActionProposal)
+                .where(
+                    HitlActionProposal.action_id == action_id,
+                    HitlActionProposal.status == "pending",
+                    HitlActionProposal.expires_at > now,
+                )
+                .values(status="cancelled", updated_at=now)
+                .execution_options(synchronize_session=False)
+            )
+            if result.rowcount != 1:
+                db.rollback()
+                raise APIError(
+                    "Pending action is already being processed or is no longer available.",
+                    409,
+                    "action_already_processed",
+                )
+            proposal.status = "cancelled"
+            proposal.updated_at = now
+            db.add(
+                HitlApprovalDecision(
+                    action_id=action_id,
+                    decided_by_user_id=user_id,
+                    decision="cancelled",
+                    decided_at=now,
+                )
+            )
+            revised = HitlActionProposal(
+                action_id=token_urlsafe(32),
+                task_id=proposal.task_id,
+                owner_user_id=user_id,
+                action_type=action,
+                parameters=payload,
+                payload_fingerprint=fingerprint,
+                status="pending",
+                created_at=now,
+                updated_at=now,
+                expires_at=now + timedelta(days=7),
+            )
+            db.add(revised)
+            db.flush()
+            _write_audit(
+                db,
+                action_id=action_id,
+                event_type="cancelled",
+                actor_user_id=user_id,
+                details={"reason": "superseded", "superseded_by": revised.action_id},
+            )
+            _write_audit(
+                db,
+                action_id=revised.action_id,
+                event_type="proposed",
+                actor_user_id=user_id,
+                details={"supersedes": action_id},
+            )
+            if task is not None:
+                _set_unresolved(task, unresolved)
+                operations = (task.collected_data or {}).get("operations")
+                if isinstance(operations, list):
+                    for item in operations:
+                        if isinstance(item, dict) and item.get("action_id") == action_id:
+                            item["action_id"] = revised.action_id
+                    flag_modified(task, "collected_data")
+                task.expires_at = revised.expires_at
+                _sync_task_status(db, task, now)
+            db.commit()
+            return _record(revised, actor_user_id=user_id)
+        except APIError:
+            db.rollback()
+            raise
+        except SQLAlchemyError as exc:
+            rollback_failed_transaction(db)
+            raise APIError(
+                "The revised pending action could not be saved.",
                 500,
                 "hitl_persistence_error",
             ) from exc

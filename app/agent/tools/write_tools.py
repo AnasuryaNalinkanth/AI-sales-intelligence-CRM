@@ -24,11 +24,17 @@ from .action_schemas import (
     UpdateLeadQualificationProposal,
 )
 from .context import AgentToolContext
-from .time_grounding import ground_meeting_time
+from .time_grounding import ground_meeting_time, stated_meeting_time
 from app.schemas.validators import (
     AmbiguousLocalTimeError,
     NonexistentLocalTimeError,
     normalize_utc_datetime,
+)
+from app.services.meeting_draft import (
+    mentions_a_day,
+    resolve_reference,
+    stated_meeting_date,
+    stated_meeting_timezone,
 )
 from app.services.scheduling_service import (
     ScheduleRequest,
@@ -46,8 +52,16 @@ def build_action_proposal_tools(
     def _prepare(
         action: AgentActionName,
         payload: dict[str, Any],
+        *,
+        task_values: dict[str, Any] | None = None,
     ) -> str:
-        interrupt({"action": action, "payload": payload})
+        interrupt(
+            {
+                "action": action,
+                "payload": payload,
+                **({"task_values": task_values} if task_values is not None else {}),
+            }
+        )
         return "The action still requires confirmation through the confirmation endpoint."
 
     def _past_message(
@@ -166,29 +180,107 @@ def build_action_proposal_tools(
         status: MeetingStatus = "scheduled",
         agenda: str | None = None,
         notes: str | None = None,
+        contact_name: str | None = None,
+        enquiry_reference: str | None = None,
     ) -> str:
-        """Collect a specific meeting date, time, and timezone before proposing. Never invent a schedule.
+        """Propose a meeting. Only the date, time, and timezone are required; never invent a schedule.
 
-        Pass scheduled_time only if the user's latest message states a time.
+        Pass scheduled_time only if the user's latest message states a time; an open
+        meeting draft keeps earlier answers, so pass only what the user just said.
+        Contact, enquiry, duration, agenda, and notes are optional: pass them only when
+        the user gives them, never invent them, and never ask for them. Pass a contact's
+        name as contact_name and an enquiry's product or description as enquiry_reference;
+        the server matches them within this customer and asks the user if none or
+        several match. Pass an empty contact_name or enquiry_reference only when the
+        user decides to go ahead without that unmatched contact or enquiry.
         """
+        if not context.can_access_customer(customer_id):
+            return _scope_violation()
+        draft = context.meeting_draft or {}
         # A time not written in the current message (e.g. copied from an earlier
         # request) is dropped, so the user is asked instead of it being reused.
         scheduled_time, time_question = ground_meeting_time(
             context.request_message, scheduled_time
         )
+        if scheduled_time is None and time_question is None and context.request_message:
+            # The model's time did not match the message (e.g. converted to UTC); the
+            # one time the user actually wrote is used instead of asking again.
+            scheduled_time, time_question = stated_meeting_time(context.request_message)
+        if scheduled_time is None and time_question is None and draft.get("scheduled_time"):
+            # A draft time was grounded in the turn that supplied it.
+            scheduled_time = time.fromisoformat(draft["scheduled_time"])
+        def supplied(value: Any, name: str) -> Any:
+            return value if value is not None else draft.get(name)
+
+        message = context.request_message or ""
+        # A draft or pending proposal keeps its date and timezone unless this message
+        # names new ones, so a model guess cannot silently move the meeting.
+        if draft.get("scheduled_timezone") and stated_meeting_timezone(message) is None:
+            scheduled_timezone = None
+        if draft.get("scheduled_date") and not mentions_a_day(message):
+            scheduled_date = None
+        zone_name = scheduled_timezone or draft.get("scheduled_timezone") or context.timezone_name
+        stated_date = (
+            stated_meeting_date(context.request_message, zone_name or "UTC")
+            if context.request_message
+            else None
+        )
+        if stated_date is not None:
+            # "tomorrow" or an ISO date in the message beats the model's date arithmetic.
+            scheduled_date = date.fromisoformat(stated_date)
+
+        questions: list[str] = []
+        references = {
+            "contact": supplied(contact_id, "contact_id"),
+            "enquiry": supplied(enquiry_id, "enquiry_id"),
+        }
+        # An explicit ID is the user's choice, so it settles a name that was unmatched.
+        unmatched = {
+            "contact": None if contact_id is not None else draft.get("contact_name"),
+            "enquiry": None if enquiry_id is not None else draft.get("enquiry_reference"),
+        }
+        for kind, phrase in (("contact", contact_name), ("enquiry", enquiry_reference)):
+            if phrase is None:
+                continue
+            if not phrase.strip():
+                # The user chose to go ahead without this reference.
+                references[kind] = unmatched[kind] = None
+                continue
+            resolved, question = resolve_reference(
+                db,
+                kind,
+                phrase,
+                organization_id=context.organization_id,
+                customer_id=customer_id,
+                message=context.request_message,
+            )
+            if question:
+                questions.append(question)
+                references[kind], unmatched[kind] = None, phrase
+            else:
+                references[kind], unmatched[kind] = resolved, None
+                remember = context.remember_contact if kind == "contact" else context.remember_enquiry
+                remember(customer_id, resolved)
+
         task_data = CreateMeetingTaskInput.model_validate(
             {
                 "customer_id": customer_id,
-                "scheduled_date": scheduled_date,
+                "scheduled_date": supplied(scheduled_date, "scheduled_date"),
                 "scheduled_time": scheduled_time,
-                "scheduled_timezone": scheduled_timezone or context.timezone_name,
-                "scheduled_time_occurrence": scheduled_time_occurrence,
-                "contact_id": contact_id,
-                "enquiry_id": enquiry_id,
-                "duration": duration,
+                "scheduled_timezone": scheduled_timezone
+                or draft.get("scheduled_timezone")
+                or context.timezone_name,
+                "scheduled_time_occurrence": supplied(
+                    scheduled_time_occurrence, "scheduled_time_occurrence"
+                ),
+                "contact_id": references["contact"],
+                "enquiry_id": references["enquiry"],
+                "contact_name": unmatched["contact"],
+                "enquiry_reference": unmatched["enquiry"],
+                "duration": supplied(duration, "duration"),
                 "status": status,
-                "agenda": agenda,
-                "notes": notes,
+                "agenda": supplied(agenda, "agenda"),
+                "notes": supplied(notes, "notes"),
             }
         )
 
@@ -204,7 +296,10 @@ def build_action_proposal_tools(
 
         values = task_data.model_dump(mode="json", exclude_none=True)
         if (
-            task_data.scheduled_date is None
+            questions
+            or task_data.contact_name
+            or task_data.enquiry_reference
+            or task_data.scheduled_date is None
             or task_data.scheduled_time is None
             or task_data.scheduled_timezone is None
         ):
@@ -214,6 +309,8 @@ def build_action_proposal_tools(
                     "action": "create_meeting",
                     "payload": values,
                     **({"question": time_question} if time_question else {}),
+                    # Unmatched contact/enquiry names are asked about with any missing fields.
+                    **({"questions": questions} if questions else {}),
                 }
             )
             return "Ask for each missing meeting schedule detail before proposing it."
@@ -234,6 +331,8 @@ def build_action_proposal_tools(
                 "scheduled_date",
                 "scheduled_time",
                 "scheduled_time_occurrence",
+                "contact_name",
+                "enquiry_reference",
             }
         )
         proposal_values["scheduled_at"] = scheduled_at
@@ -270,6 +369,8 @@ def build_action_proposal_tools(
         return _prepare(
             "create_meeting",
             proposal.model_dump(mode="json"),
+            # A resumed draft becomes its proposal through the task flow, which takes these.
+            task_values=values,
         )
 
     def create_followup(

@@ -23,6 +23,8 @@ class AgentToolContext:
     schedule_conflict: dict[str, Any] | None = None
     # Read-tool calls already answered in this request, keyed by name and arguments.
     retrieved_calls: set[str] = field(default_factory=set)
+    # Values of the user's validated create_meeting draft being completed in this request.
+    meeting_draft: dict[str, Any] | None = None
 
     def can_access_customer(self, customer_id: int) -> bool:
         return self.locked_customer_id is None or self.locked_customer_id == customer_id

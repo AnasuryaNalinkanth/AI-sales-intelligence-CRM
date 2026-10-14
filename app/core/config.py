@@ -1,6 +1,7 @@
+from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
 
@@ -20,10 +21,17 @@ class Settings(BaseSettings):
     db_name: str = "ai_sales_crm"
     db_user: str | None = None
     db_password: SecretStr = SecretStr("")
+    ai_provider: Literal["gemini", "ollama"] = "gemini"
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-2.5-flash"
     gemini_timeout_seconds: float = Field(default=30.0, gt=0.0, le=300.0)
     gemini_max_retries: int = Field(default=2, ge=0, le=10)
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "qwen3.5:4b"
+    # Local models on CPU can be slow; allow a longer ceiling than Gemini.
+    ollama_timeout_seconds: float = Field(default=120.0, gt=0.0, le=600.0)
+    # Ollama's runtime default (often 4096) silently truncates the agent prompt and tools.
+    ollama_num_ctx: int = Field(default=16384, ge=2048, le=262144)
     # Keep the legacy key available only for redacting secrets from an untouched .env.
     openai_api_key: SecretStr | None = None
     agent_recursion_limit: int = Field(default=12, ge=2, le=100)
@@ -61,6 +69,11 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @field_validator("ai_provider", mode="before")
+    @classmethod
+    def normalize_ai_provider(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":

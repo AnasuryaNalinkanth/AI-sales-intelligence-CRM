@@ -693,6 +693,34 @@ def test_answers_from_crm_lookups_are_kept(
     assert _count(agent_sessions, HitlActionProposal) == 0
 
 
+def test_empty_answer_never_returns_an_earlier_reply_from_history(
+    agent_client: TestClient,
+    agent_sessions: sessionmaker[Session],
+    agent_records: dict[str, int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    customer_id = agent_records["customer_id"]
+    stale = "I am ready to create meeting for 2026-10-15 21:00 Asia/Dubai (UTC+04:00). Please confirm."
+    _model(monkeypatch, AIMessage(content=stale))
+    conversation_id = _chat(agent_client, customer_id, "Hello").json()["conversation_id"]
+
+    # A truncated local model can end the run with empty content after a read tool.
+    _model(
+        monkeypatch,
+        _tool_call("get_customer_profile", {"customer_id": customer_id}, "read"),
+        AIMessage(content=""),
+    )
+    body = _chat(agent_client, customer_id, "Summarize this customer", conversation_id).json()
+
+    assert body["response"] == "I could not complete that request."
+    assert body["pending_action"] is None
+    assert body["clarification_task"] is None
+    assert _count(agent_sessions, HitlActionProposal) == 0
+    with agent_sessions() as db:
+        stored = [row.content for row in db.query(AgentConversationMessage).all()]
+    assert stored.count(stale) == 1
+
+
 @pytest.mark.parametrize(
     "answer",
     [

@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.validators import validate_timezone_name
 
@@ -17,11 +17,21 @@ class AgentChatRequest(BaseModel):
     timezone_name: str | None = None
     # Omitted to start a new conversation; otherwise one the server issued to this user.
     conversation_id: UUID | None = None
+    # The user's open create_meeting clarification task that this message continues.
+    task_id: UUID | None = None
+    # The user's pending create_meeting proposal that this message adds details to.
+    pending_action_id: str | None = Field(default=None, min_length=1, max_length=128)
 
     @field_validator("timezone_name", mode="after")
     @classmethod
     def validate_user_timezone(cls, value: str | None) -> str | None:
         return validate_timezone_name(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def continue_one_meeting(self) -> "AgentChatRequest":
+        if self.task_id is not None and self.pending_action_id is not None:
+            raise ValueError("Send either task_id or pending_action_id, not both.")
+        return self
 
 
 class AgentToolCall(BaseModel):

@@ -46,6 +46,12 @@ def freeze_scheduling_clock(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def default_ai_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Tests assume the shipped default, whatever a developer's local .env selects.
+    monkeypatch.setattr(settings, "ai_provider", "gemini")
+
+
+@pytest.fixture(autouse=True)
 def ensure_jwt_test_secret(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     ai_rate_limiter.reset()
     if len(settings.jwt_secret_key.get_secret_value().strip()) < 32:

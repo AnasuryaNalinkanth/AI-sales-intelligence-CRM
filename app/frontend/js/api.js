@@ -273,7 +273,13 @@ export function retryCalendarSync() {
   return request("/integrations/google-calendar/retry", { method: "POST" });
 }
 
-export function chatWithAgent(message, customerId = null, conversationId = null) {
+export function chatWithAgent(
+  message,
+  customerId = null,
+  conversationId = null,
+  taskId = null,
+  pendingActionId = null,
+) {
   return request("/agent/chat", {
     method: "POST",
     body: JSON.stringify({
@@ -281,6 +287,8 @@ export function chatWithAgent(message, customerId = null, conversationId = null)
       timezone_name: Intl.DateTimeFormat().resolvedOptions().timeZone,
       ...(customerId === null ? {} : { customer_id: customerId }),
       ...(conversationId ? { conversation_id: conversationId } : {}),
+      ...(taskId ? { task_id: taskId } : {}),
+      ...(pendingActionId ? { pending_action_id: pendingActionId } : {}),
     }),
   });
 }

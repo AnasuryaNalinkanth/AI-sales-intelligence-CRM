@@ -63,6 +63,9 @@ class CreateMeetingTaskInput(ActionInput):
     status: MeetingStatus = "scheduled"
     agenda: str | None = Field(default=None, max_length=MAX_TEXT_LENGTH)
     notes: str | None = Field(default=None, max_length=MAX_TEXT_LENGTH)
+    # Names the user gave that matched no single record; the meeting waits for a choice.
+    contact_name: str | None = Field(default=None, max_length=255)
+    enquiry_reference: str | None = Field(default=None, max_length=255)
 
     @field_validator("scheduled_timezone", mode="after")
     @classmethod

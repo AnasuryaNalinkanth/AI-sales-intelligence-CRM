@@ -69,7 +69,19 @@ ACTION_REGISTRY: dict[AgentActionName, ActionDefinition] = {
                 help_text="Choose this only when the local time occurs twice.",
             ),
             FormField("contact_id", "Contact", "record", selector="contact"),
+            FormField(
+                "contact_name",
+                "Contact name to match",
+                "text",
+                help_text="Choose the contact above, or clear this to schedule without one.",
+            ),
             FormField("enquiry_id", "Sales enquiry", "record", selector="enquiry"),
+            FormField(
+                "enquiry_reference",
+                "Sales enquiry to match",
+                "text",
+                help_text="Choose the enquiry above, or clear this to schedule without one.",
+            ),
             FormField("duration", "Duration in minutes", "number"),
             FormField("agenda", "Agenda", "text"),
             FormField("notes", "Notes", "textarea"),
@@ -250,6 +262,12 @@ def validate_operation(
         "loss_reason"
     ):
         missing.append("loss_reason")
+    if action == "create_meeting":
+        # A named contact or enquiry that matched no single record needs an explicit
+        # choice, or the name cleared, before the meeting can be proposed.
+        for name_field, id_field in (("contact_name", "contact_id"), ("enquiry_reference", "enquiry_id")):
+            if values.get(name_field) and values.get(id_field) is None:
+                missing.append(id_field)
     if action == "create_meeting" and values.get("scheduled_timezone"):
         try:
             validate_timezone_name(values["scheduled_timezone"])
@@ -275,6 +293,8 @@ def validate_operation(
                     "scheduled_date",
                     "scheduled_time",
                     "scheduled_time_occurrence",
+                    "contact_name",
+                    "enquiry_reference",
                 }
             )
             proposal_values["scheduled_at"] = scheduled_at

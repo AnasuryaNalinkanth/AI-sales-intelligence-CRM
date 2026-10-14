@@ -1077,7 +1077,10 @@ def test_frontend_auth_and_customer_switch_isolation_assets(
     assert "pendingAgentAction = null" in customer_js
     assert "agentActionNotice = \"\"" in customer_js
     assert "agentChatLoading = false" in customer_js
-    assert "cancelAgentAction(staleActionId)" in customer_js
+    # Switching clears the view without cancelling server-side proposals; a restored
+    # proposal card must belong to the newly selected customer.
+    assert "cancelAgentAction(staleActionId)" not in customer_js
+    assert "String(operation.values?.customer_id) === String(customerId)" in customer_js
 
     frontend_js_dir = Path("app/frontend/js")
     for js_file in frontend_js_dir.glob("*.js"):

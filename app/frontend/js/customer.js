@@ -109,12 +109,9 @@ let hitlBusy = false;
 let hitlIsAdmin = false;
 let hitlPolicyModes = {};
 
-function resetCustomerAiState({ cancelPending = true } = {}) {
-  // Task proposals stay listed under Agent approvals, so only ad-hoc chat proposals are cancelled.
-  if (cancelPending && pendingAgentAction?.action_id && !pendingAgentAction.fromTask) {
-    const staleActionId = pendingAgentAction.action_id;
-    void cancelAgentAction(staleActionId).catch(() => {});
-  }
+// Leaving a customer only clears this view. A pending proposal stays pending (and listed
+// under Agent approvals) until the user explicitly approves, rejects or cancels it.
+function resetCustomerAiState() {
   aiSummary = null;
   aiSummaryError = "";
   aiSummaryLoading = false;
@@ -556,6 +553,13 @@ function renderHitlTask(task) {
       element("span", statusClass(operation.status), humanize(operation.status)),
     );
     operationCard.append(operationHeading);
+    if (operation.status === "superseded") {
+      operationCard.append(element(
+        "p",
+        "hitl-field-help",
+        "Replaced by a revised version below. This version can no longer be approved.",
+      ));
+    }
 
     const exactParameters = element("details", "hitl-parameters");
     exactParameters.append(
@@ -684,6 +688,10 @@ function renderHitlTask(task) {
           );
           for (const [name, value] of Object.entries(rawValues)) {
             const field = operation.fields.find((candidate) => candidate.name === name);
+            // Clearing an unmatched name is the user's decision to go ahead without it.
+            if (!value && ["contact_name", "enquiry_reference"].includes(name) && field?.value) {
+              values[name] = null;
+            }
             if (!value) continue;
             if (field?.input_type === "datetime") {
               const zoneName = name === "scheduled_at"
@@ -1084,7 +1092,8 @@ function appendAgentChat(parent, customer) {
   input.placeholder = "Ask a question or request an action… (Shift+Enter for a new line)";
   input.required = true;
   input.value = agentChatDraft;
-  input.disabled = agentChatLoading || Boolean(pendingAgentAction);
+  // A pending meeting proposal can still be amended in chat; other proposals block input.
+  input.disabled = agentChatLoading || Boolean(pendingAgentAction && !isAmendableProposal(pendingAgentAction));
   input.addEventListener("input", () => {
     agentChatDraft = input.value;
     autosizeChatInput(input);
@@ -1107,13 +1116,17 @@ function appendAgentChat(parent, customer) {
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     const message = input.value.trim();
-    if (message && !agentChatLoading && !pendingAgentAction) {
+    if (message && !agentChatLoading && (!pendingAgentAction || isAmendableProposal(pendingAgentAction))) {
       agentChatDraft = "";
       void sendAgentChatMessage(message, customer.customer_id);
     }
   });
   chat.append(form);
   parent.append(chat);
+}
+
+function isAmendableProposal(action) {
+  return action?.action === "create_meeting" && Boolean(action.action_id);
 }
 
 const CHAT_INPUT_MAX_HEIGHT = 160;
@@ -1195,8 +1208,22 @@ async function sendAgentChatMessage(message, customerId) {
   agentChatLoading = true;
   agentActionNotice = "";
   renderCustomer(selectedCustomer);
+  // An open meeting draft for this customer is continued by the next chat message.
+  const draft = agentClarificationTask;
+  const draftOperation = draft?.operations?.[0];
+  const draftTaskId = draft?.status === "collecting_information"
+    && draftOperation?.action === "create_meeting"
+    && String(draftOperation.values?.customer_id) === String(customerId)
+    ? draft.task_id
+    : null;
+  // Details sent while a meeting proposal awaits approval revise that proposal.
+  const amendedActionId = !draftTaskId && isAmendableProposal(pendingAgentAction)
+    ? pendingAgentAction.action_id
+    : null;
   try {
-    const response = await chatWithAgent(message, customerId, agentConversationId);
+    const response = await chatWithAgent(
+      message, customerId, agentConversationId, draftTaskId, amendedActionId,
+    );
     if (String(selectedCustomerId) !== String(customerId)) return;
     agentConversationId = response.conversation_id || agentConversationId;
     agentChatMessages.push({ role: "assistant", text: response.response });
@@ -1219,11 +1246,25 @@ async function sendAgentChatMessage(message, customerId) {
   } catch (error) {
     if (String(selectedCustomerId) !== String(customerId)) return;
     if (error?.code === "conversation_not_found") agentConversationId = null;
+    const staleDraft = draftTaskId && [
+      "task_not_found", "task_expired", "invalid_task_transition", "invalid_meeting_draft",
+    ].includes(error?.code);
+    // Drop a draft the server no longer accepts so the next message starts fresh.
+    if (staleDraft) agentClarificationTask = null;
+    const staleProposal = amendedActionId && [
+      "action_not_found", "action_expired", "action_already_processed",
+      "action_parameters_changed", "invalid_pending_action",
+    ].includes(error?.code);
+    if (staleProposal) pendingAgentAction = null;
     agentChatMessages.push({
       role: "assistant",
       text: error?.code === "conversation_not_found"
         ? "This conversation is no longer available. Your next message starts a new one."
-        : aiErrorMessage(error),
+        : staleDraft
+          ? "That meeting draft is no longer open. Please send your meeting request again."
+          : staleProposal
+            ? "That meeting proposal is no longer pending, so it was not changed."
+            : aiErrorMessage(error),
     });
   } finally {
     agentChatLoading = false;
@@ -1449,7 +1490,8 @@ async function confirmPendingAgentAction(customerId) {
     await refreshHitlTasks();
   } catch (error) {
     agentActionNotice = aiErrorMessage(error);
-    if (error?.status === 404 || error?.status === 410) {
+    // Missing, expired, or already decided elsewhere: the card no longer represents a choice.
+    if (error?.status === 404 || error?.status === 410 || error?.code === "action_already_processed") {
       pendingAgentAction = null;
     }
   } finally {
@@ -1473,7 +1515,8 @@ async function cancelPendingAgentAction() {
     await refreshHitlTasks();
   } catch (error) {
     agentActionNotice = aiErrorMessage(error);
-    if (error?.status === 404 || error?.status === 410) {
+    // Missing, expired, or already decided elsewhere: the card no longer represents a choice.
+    if (error?.status === 404 || error?.status === 410 || error?.code === "action_already_processed") {
       pendingAgentAction = null;
     }
   } finally {
@@ -1957,7 +2000,7 @@ function renderCustomer(customer) {
 
 async function selectCustomer(customerId) {
   if (!requireAuth()) return;
-  resetCustomerAiState({ cancelPending: true });
+  resetCustomerAiState();
   selectedCustomerId = customerId;
   hitlCustomerContext.textContent = `New tasks will start with customer #${customerId}; confirm the record in the form.`;
   selectedCustomer = null;
@@ -1979,13 +2022,42 @@ async function selectCustomer(customerId) {
 async function restoreAgentConversation(customerId) {
   try {
     const conversation = await getLatestConversation(customerId);
-    if (String(selectedCustomerId) !== String(customerId) || !conversation) return;
-    if (agentChatMessages.length || agentChatLoading) return; // Never overwrite a chat already in progress.
-    agentConversationId = conversation.conversation_id;
-    agentChatMessages = conversation.messages.map((item) => ({ role: item.role, text: item.content }));
-    if (selectedCustomer) renderCustomer(selectedCustomer);
+    // No early return: the pending proposal below is restored either way.
+    if (String(selectedCustomerId) === String(customerId) && conversation
+      && !agentChatMessages.length && !agentChatLoading) { // Never overwrite a chat already in progress.
+      agentConversationId = conversation.conversation_id;
+      agentChatMessages = conversation.messages.map((item) => ({ role: item.role, text: item.content }));
+      if (selectedCustomer) renderCustomer(selectedCustomer);
+    }
   } catch {
     // History is a convenience; the chat still works without it.
+  }
+  await restorePendingProposal(customerId);
+}
+
+// Shows this customer's newest proposal still awaiting approval again after navigating back.
+async function restorePendingProposal(customerId) {
+  try {
+    const tasks = await getAgentTasks();
+    if (String(selectedCustomerId) !== String(customerId) || pendingAgentAction) return;
+    const waiting = tasks
+      .filter((task) => task.status === "awaiting_approval")
+      .flatMap((task) => task.operations
+        .filter((operation) => operation.status === "pending" && operation.action_id
+          && String(operation.values?.customer_id) === String(customerId))
+        .map((operation) => ({ task, operation })))
+      .sort((a, b) => String(b.task.expires_at).localeCompare(String(a.task.expires_at)));
+    if (!waiting.length) return;
+    const { operation } = waiting[0];
+    pendingAgentAction = {
+      action_id: operation.action_id,
+      action: operation.action,
+      payload: operation.values,
+      fromTask: true,
+    };
+    if (selectedCustomer) renderCustomer(selectedCustomer);
+  } catch {
+    // The proposal is still listed under Agent approvals.
   }
 }
 
@@ -2551,7 +2623,7 @@ async function completeFollowup(followupId) {
 searchForm.addEventListener("submit", (event) => {
   event.preventDefault();
   if (!requireAuth()) return;
-  resetCustomerAiState({ cancelPending: true });
+  resetCustomerAiState();
   currentSearch = searchInput.value.trim();
   currentPage = 1;
   selectedCustomerId = null;

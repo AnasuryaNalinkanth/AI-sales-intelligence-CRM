@@ -74,6 +74,24 @@ def map_ai_provider_exception(
 
 
 def create_chat_model():
+    if settings.ai_provider == "ollama":
+        from langchain_ollama import ChatOllama
+
+        return ChatOllama(
+            model=settings.ollama_model,
+            base_url=settings.ollama_base_url,
+            num_ctx=settings.ollama_num_ctx,
+            client_kwargs={"timeout": settings.ollama_timeout_seconds},
+        )
+
+    if settings.ai_provider != "gemini":
+        logger.error("Unsupported AI_PROVIDER configured; expected 'gemini' or 'ollama'.")
+        raise APIError(
+            "The AI assistant is not configured.",
+            status_code=503,
+            code="llm_not_configured",
+        )
+
     if settings.gemini_api_key is None or not settings.gemini_api_key.get_secret_value().strip():
         raise APIError(
             "The AI assistant is not configured.",

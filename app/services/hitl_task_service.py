@@ -25,6 +25,7 @@ from app.services.agent_action_state import (
     PendingActionRecord,
     action_fingerprint,
     pending_actions,
+    superseded_action_ids,
 )
 from app.services.hitl_action_registry import (
     ACTION_REGISTRY,
@@ -280,19 +281,44 @@ def _operation_status(
     return proposal.status, result
 
 
+def _task_proposals(
+    db: Session, task_id: str
+) -> tuple[list[HitlActionProposal], list[HitlActionProposal]]:
+    """(current, superseded) proposals of a task, oldest first."""
+    proposals = list(
+        db.scalars(
+            select(HitlActionProposal)
+            .where(HitlActionProposal.task_id == task_id)
+            .order_by(HitlActionProposal.created_at)
+        ).all()
+    )
+    superseded = superseded_action_ids(
+        db, [proposal.action_id for proposal in proposals if proposal.status == "cancelled"]
+    )
+    return (
+        [proposal for proposal in proposals if proposal.action_id not in superseded],
+        [proposal for proposal in proposals if proposal.action_id in superseded],
+    )
+
+
 def _response(db: Session, task: HitlTask) -> AgentTaskResponse:
     owner = db.get(User, task.owner_user_id)
     if owner is None:
         raise APIError("Task not found.", 404, "task_not_found")
-    proposals = list(
-        db.scalars(
-            select(HitlActionProposal).where(
-                HitlActionProposal.task_id == task.task_id
-            )
-        ).all()
-    )
+    current, superseded = _task_proposals(db, task.task_id)
+    # Earlier versions replaced by a revision are listed first, read-only, as "superseded".
+    history = [
+        {
+            "action": proposal.action_type,
+            "values": proposal.parameters,
+            "status": "superseded",
+            "action_id": proposal.action_id,
+        }
+        for proposal in superseded
+    ]
+    proposals = current + superseded
     operations: list[AgentTaskOperationResponse] = []
-    for item in _decode_operations(task.collected_data, proposals=proposals):
+    for item in [*history, *_decode_operations(task.collected_data, proposals=current)]:
         action = item.get("action")
         values = item.get("values")
         if action not in ACTION_REGISTRY or not isinstance(values, dict):
@@ -321,6 +347,8 @@ def _response(db: Session, task: HitlTask) -> AgentTaskResponse:
         else:
             payload, missing = validate_operation(action, values)
         status, result = _operation_status(db, item)
+        if item in history:
+            status = "superseded"
         operations.append(
             AgentTaskOperationResponse(
                 action=action,
@@ -471,13 +499,8 @@ def resume_task(
     organization_id: int,
 ) -> AgentTaskResponse:
     task = pending_actions.get_task(db, task_id, user_id=user_id)
-    proposals = list(
-        db.scalars(
-            select(HitlActionProposal).where(
-                HitlActionProposal.task_id == task_id
-            )
-        ).all()
-    )
+    # Superseded versions can never run again, so only current ones are revalidated.
+    proposals, _ = _task_proposals(db, task_id)
     if task.status != "expired":
         for item in _decode_operations(task.collected_data, proposals=proposals):
             action = item.get("action")
