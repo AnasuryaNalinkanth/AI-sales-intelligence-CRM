@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.exceptions import APIError
 from app.database.connection import SessionLocal
+from app.schemas.analytics import date_range_error
 from app.schemas.intelligence import InsightCategory
 from app.services import analytics_service, proactive_insights_service
 
@@ -20,8 +21,8 @@ class SalesAnalyticsInput(BaseModel):
 
     @model_validator(mode="after")
     def date_range_is_valid(self) -> "SalesAnalyticsInput":
-        if self.start_date and self.end_date and self.start_date > self.end_date:
-            raise ValueError("start_date must be on or before end_date")
+        if error := date_range_error(self.start_date, self.end_date):
+            raise ValueError(error)
         return self
 
 

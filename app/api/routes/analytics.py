@@ -4,11 +4,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.core.rate_limit import enforce_analytics_ask_rate_limit
 from app.core.security import get_current_user
 from app.database.connection import get_db
 from app.models import User
 from app.schemas.analytics import (
     ActivityMetrics,
+    AnalyticsAskRequest,
+    AnalyticsAskResponse,
     AnalyticsDateRange,
     CustomerMetrics,
     EnquiryMetrics,
@@ -16,6 +19,7 @@ from app.schemas.analytics import (
     OverviewMetrics,
     PipelineMetrics,
     TimeGrain,
+    date_range_error,
 )
 from app.schemas.intelligence import (
     AttentionQueue,
@@ -23,7 +27,12 @@ from app.schemas.intelligence import (
     InsightLevel,
     ProactiveInsights,
 )
-from app.services import analytics_service, intelligence_service, proactive_insights_service
+from app.services import (
+    analytics_query_service,
+    analytics_service,
+    intelligence_service,
+    proactive_insights_service,
+)
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -32,11 +41,8 @@ def _date_range(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
 ) -> AnalyticsDateRange:
-    if start_date is not None and end_date is not None and start_date > end_date:
-        raise HTTPException(
-            status_code=422,
-            detail="start_date must be on or before end_date",
-        )
+    if error := date_range_error(start_date, end_date):
+        raise HTTPException(status_code=422, detail=error)
     return AnalyticsDateRange(start_date=start_date, end_date=end_date)
 
 
@@ -165,6 +171,23 @@ def get_proactive_insights(
         customer_id=customer_id,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.post(
+    "/ask",
+    response_model=AnalyticsAskResponse,
+    summary="Answer a sales analytics question with an approved, read-only operation",
+    dependencies=[Depends(enforce_analytics_ask_rate_limit)],
+)
+async def ask_analytics(
+    request: AnalyticsAskRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AnalyticsAskResponse:
+    # Async so a slow model call waits on the event loop instead of holding a worker thread.
+    return await analytics_query_service.ask(
+        db, request.question, organization_id=current_user.organization_id
     )
 
 

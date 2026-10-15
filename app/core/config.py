@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     ollama_num_ctx: int = Field(default=16384, ge=2048, le=262144)
     # Keep the legacy key available only for redacting secrets from an untouched .env.
     openai_api_key: SecretStr | None = None
+    # Overall deadline for interpreting one analytics question. Provider timeouts are per
+    # request or per streamed read, so they do not bound the total on their own.
+    analytics_ask_timeout_seconds: float = Field(default=60.0, gt=0.0, le=600.0)
     agent_recursion_limit: int = Field(default=12, ge=2, le=100)
     # Earlier chat messages sent to the model per request; each is also capped in length.
     agent_history_max_messages: int = Field(default=12, ge=0, le=50)

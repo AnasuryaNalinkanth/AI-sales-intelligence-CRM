@@ -83,3 +83,12 @@ def enforce_ai_rate_limit(
     client_host = request.client.host if request.client else "unknown"
     key = f"user:{current_user.user_id}:{client_host}"
     ai_rate_limiter.check(key)
+
+
+def enforce_analytics_ask_rate_limit(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> None:
+    # Same limits, separate bucket: analytics questions do not use up the agent chat allowance.
+    client_host = request.client.host if request.client else "unknown"
+    ai_rate_limiter.check(f"analytics-ask:user:{current_user.user_id}:{client_host}")
