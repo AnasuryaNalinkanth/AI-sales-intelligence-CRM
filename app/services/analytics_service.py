@@ -80,6 +80,15 @@ def _period_expression(
     db: Session,
 ) -> ColumnElement[Any]:
     dialect = db.get_bind().dialect.name
+    if dialect == "postgresql":
+        pg_format = {
+            # ISO year with ISO week, so the first days of January land in last year's week.
+            "daily": "YYYY-MM-DD",
+            "weekly": 'IYYY-"W"IW',
+            "monthly": "YYYY-MM",
+        }[grain]
+        # timestamptz -> UTC wall time, so labels do not depend on the session TimeZone.
+        return func.to_char(func.timezone("UTC", column), pg_format)
     format_string = {
         "daily": "%Y-%m-%d",
         "weekly": "%Y-W%u" if dialect == "mysql" else "%Y-W%W",

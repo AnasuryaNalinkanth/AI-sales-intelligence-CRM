@@ -3,7 +3,7 @@ from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy.engine import URL
+from sqlalchemy.engine import URL, make_url
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
 
@@ -21,6 +21,15 @@ class Settings(BaseSettings):
     db_name: str = "ai_sales_crm"
     db_user: str | None = None
     db_password: SecretStr = SecretStr("")
+    # When set, replaces the DB_* settings above. Secret because it embeds the password.
+    database_url_override: SecretStr | None = Field(default=None, validation_alias="DATABASE_URL")
+    # "serverless" opens a fresh connection per checkout (NullPool) for an external pooler
+    # such as Supabase Supavisor; "pooled" keeps the in-process pool used locally.
+    database_pool_mode: Literal["pooled", "serverless"] = "pooled"
+    # Applied to PostgreSQL URLs that do not set sslmode themselves.
+    database_ssl_mode: Literal[
+        "disable", "allow", "prefer", "require", "verify-ca", "verify-full"
+    ] = "require"
     ai_provider: Literal["gemini", "ollama"] = "gemini"
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-2.5-flash"
@@ -115,6 +124,17 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> URL:
+        raw = (
+            self.database_url_override.get_secret_value().strip()
+            if self.database_url_override is not None
+            else ""
+        )
+        if raw:
+            url = make_url(raw)
+            # Providers hand out postgres:// or postgresql:// URLs; pick the installed driver.
+            if url.drivername in {"postgres", "postgresql"}:
+                url = url.set(drivername="postgresql+psycopg")
+            return url
         password = self.db_password.get_secret_value()
         return URL.create(
             drivername="mysql+pymysql",

@@ -38,7 +38,9 @@ class GoogleCalendarConnection(Base):
     access_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     scope: Mapped[str] = mapped_column(String(512), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="connected")
-    reminder_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    reminder_minutes: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=10, server_default="10"
+    )
     connected_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -77,7 +79,7 @@ class CalendarEventLink(Base):
     google_event_id: Mapped[str] = mapped_column(String(64), nullable=False)
     sync_status: Mapped[str] = mapped_column(String(16), nullable=False)
     last_error: Mapped[str | None] = mapped_column(String(64))
-    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

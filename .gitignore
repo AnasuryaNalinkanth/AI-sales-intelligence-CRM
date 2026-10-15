@@ -64,3 +64,18 @@ htmlcov/
 ai_sales_crm_backup.sql
 
 before_0013_backup.sql
+.vercel
+.env*
+
+
+
+# Vercel local configuration and secrets
+.vercel/
+.env.local
+.env.*.local
+
+
+# Vercel local configuration and secrets
+.vercel/
+.env.local
+.env.*.local

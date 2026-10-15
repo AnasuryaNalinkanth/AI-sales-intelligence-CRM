@@ -124,7 +124,13 @@ class Customer(Base):
     customer_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     organization_id: Mapped[int] = mapped_column(Integer, nullable=False)
     company_id: Mapped[int] = mapped_column(
-        ForeignKey("companies.company_id", ondelete="RESTRICT"), nullable=False, index=True
+        ForeignKey(
+            "companies.company_id",
+            ondelete="RESTRICT",
+            name="fk_customers_company_id_companies",
+        ),
+        nullable=False,
+        index=True,
     )
     customer_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
@@ -170,7 +176,13 @@ class Contact(Base):
     contact_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     organization_id: Mapped[int] = mapped_column(Integer, nullable=False)
     customer_id: Mapped[int] = mapped_column(
-        ForeignKey("customers.customer_id", ondelete="RESTRICT"), nullable=False, index=True
+        ForeignKey(
+            "customers.customer_id",
+            ondelete="RESTRICT",
+            name="fk_contacts_customer_id_customers",
+        ),
+        nullable=False,
+        index=True,
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     job_title: Mapped[str | None] = mapped_column(String(150))
@@ -229,7 +241,13 @@ class SalesEnquiry(Base):
     enquiry_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     organization_id: Mapped[int] = mapped_column(Integer, nullable=False)
     customer_id: Mapped[int] = mapped_column(
-        ForeignKey("customers.customer_id", ondelete="RESTRICT"), nullable=False, index=True
+        ForeignKey(
+            "customers.customer_id",
+            ondelete="RESTRICT",
+            name="fk_sales_enquiries_customer_id_customers",
+        ),
+        nullable=False,
+        index=True,
     )
     product: Mapped[str | None] = mapped_column(String(255))
     enquiry_text: Mapped[str] = mapped_column(Text, nullable=False)
@@ -294,13 +312,29 @@ class Meeting(Base):
     meeting_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     organization_id: Mapped[int] = mapped_column(Integer, nullable=False)
     customer_id: Mapped[int] = mapped_column(
-        ForeignKey("customers.customer_id", ondelete="RESTRICT"), nullable=False, index=True
+        ForeignKey(
+            "customers.customer_id",
+            ondelete="RESTRICT",
+            name="fk_meetings_customer_id_customers",
+        ),
+        nullable=False,
+        index=True,
     )
     contact_id: Mapped[int | None] = mapped_column(
-        ForeignKey("contacts.contact_id", ondelete="SET NULL"), index=True
+        ForeignKey(
+            "contacts.contact_id",
+            ondelete="SET NULL",
+            name="fk_meetings_contact_id_contacts",
+        ),
+        index=True,
     )
     enquiry_id: Mapped[int | None] = mapped_column(
-        ForeignKey("sales_enquiries.enquiry_id", ondelete="SET NULL"), index=True
+        ForeignKey(
+            "sales_enquiries.enquiry_id",
+            ondelete="SET NULL",
+            name="fk_meetings_enquiry_id_sales_enquiries",
+        ),
+        index=True,
     )
     scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     scheduled_timezone: Mapped[str] = mapped_column(
@@ -346,13 +380,29 @@ class Call(Base):
     call_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     organization_id: Mapped[int] = mapped_column(Integer, nullable=False)
     customer_id: Mapped[int] = mapped_column(
-        ForeignKey("customers.customer_id", ondelete="RESTRICT"), nullable=False, index=True
+        ForeignKey(
+            "customers.customer_id",
+            ondelete="RESTRICT",
+            name="fk_calls_customer_id_customers",
+        ),
+        nullable=False,
+        index=True,
     )
     contact_id: Mapped[int | None] = mapped_column(
-        ForeignKey("contacts.contact_id", ondelete="SET NULL"), index=True
+        ForeignKey(
+            "contacts.contact_id",
+            ondelete="SET NULL",
+            name="fk_calls_contact_id_contacts",
+        ),
+        index=True,
     )
     enquiry_id: Mapped[int | None] = mapped_column(
-        ForeignKey("sales_enquiries.enquiry_id", ondelete="SET NULL"), index=True
+        ForeignKey(
+            "sales_enquiries.enquiry_id",
+            ondelete="SET NULL",
+            name="fk_calls_enquiry_id_sales_enquiries",
+        ),
+        index=True,
     )
     call_type: Mapped[str | None] = mapped_column(String(50))
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
@@ -397,16 +447,37 @@ class FollowUp(Base):
     followup_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     organization_id: Mapped[int] = mapped_column(Integer, nullable=False)
     customer_id: Mapped[int] = mapped_column(
-        ForeignKey("customers.customer_id", ondelete="RESTRICT"), nullable=False, index=True
+        ForeignKey(
+            "customers.customer_id",
+            ondelete="RESTRICT",
+            name="fk_follow_ups_customer_id_customers",
+        ),
+        nullable=False,
+        index=True,
     )
     enquiry_id: Mapped[int | None] = mapped_column(
-        ForeignKey("sales_enquiries.enquiry_id", ondelete="SET NULL"), index=True
+        ForeignKey(
+            "sales_enquiries.enquiry_id",
+            ondelete="SET NULL",
+            name="fk_follow_ups_enquiry_id_sales_enquiries",
+        ),
+        index=True,
     )
     meeting_id: Mapped[int | None] = mapped_column(
-        ForeignKey("meetings.meeting_id", ondelete="SET NULL"), index=True
+        ForeignKey(
+            "meetings.meeting_id",
+            ondelete="SET NULL",
+            name="fk_follow_ups_meeting_id_meetings",
+        ),
+        index=True,
     )
     call_id: Mapped[int | None] = mapped_column(
-        ForeignKey("calls.call_id", ondelete="SET NULL"), index=True
+        ForeignKey(
+            "calls.call_id",
+            ondelete="SET NULL",
+            name="fk_follow_ups_call_id_calls",
+        ),
+        index=True,
     )
     type: Mapped[str] = mapped_column(String(50), nullable=False)
     due_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)

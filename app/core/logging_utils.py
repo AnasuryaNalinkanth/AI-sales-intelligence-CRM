@@ -39,11 +39,16 @@ def _configured_secrets() -> list[str]:
         settings.openai_api_key,
         settings.jwt_secret_key,
         settings.db_password,
+        settings.database_url_override,
     ):
         if secret is not None:
             raw = secret.get_secret_value().strip()
             if raw:
                 values.append(raw)
+    if settings.database_url_override is not None:
+        url_password = settings.database_url.password
+        if url_password:
+            values.append(str(url_password))
     return values
 
 
@@ -72,6 +77,18 @@ def _integrity_error_metadata(
 ) -> tuple[int | None, dict[str, str]]:
     if not isinstance(exc, IntegrityError):
         return None, {}
+
+    sqlstate = getattr(exc.orig, "sqlstate", None)
+    if isinstance(sqlstate, str):
+        # psycopg (PostgreSQL): diag carries identifiers only, never row values.
+        diag = getattr(exc.orig, "diag", None)
+        found = {
+            "sqlstate": sqlstate,
+            "constraint_or_column": getattr(diag, "constraint_name", None)
+            or getattr(diag, "column_name", None),
+            "child_table": getattr(diag, "table_name", None),
+        }
+        return None, {key: value for key, value in found.items() if value}
 
     original_args = getattr(exc.orig, "args", ())
     error_code = (
@@ -126,7 +143,7 @@ def log_database_exception(
             "Database operation failed "
             "[operation=%s error_type=%s mysql_error_code=%s "
             "constraint_or_column=%s child_table=%s child_column=%s "
-            "parent_table=%s parent_column=%s]\n%s",
+            "parent_table=%s parent_column=%s sqlstate=%s]\n%s",
             operation,
             type(exc).__name__,
             error_code,
@@ -135,6 +152,7 @@ def log_database_exception(
             identifiers.get("child_column"),
             identifiers.get("parent_table"),
             identifiers.get("parent_column"),
+            identifiers.get("sqlstate"),
             stack,
         )
         return
