@@ -89,7 +89,7 @@ class FakePlanModel:
 
 def _install(monkeypatch: pytest.MonkeyPatch, reply: object) -> FakePlanModel:
     model = FakePlanModel(reply)
-    monkeypatch.setattr(analytics_query_service, "create_chat_model", lambda: model)
+    monkeypatch.setattr(analytics_query_service, "create_chat_model", lambda **_: model)
     return model
 
 
@@ -199,7 +199,7 @@ def test_summaries_are_deterministic_and_state_all_time_and_relative_dates(
     _add_closed_leads(agent_sessions, agent_records["customer_id"])
 
     _install(monkeypatch, {"operation": "lead_win_rate", "start_date": START, "end_date": END})
-    body = agent_client.post(ASK, json={"question": "Win rate this year?"}).json()
+    body = agent_client.post(ASK, json={"question": "Roughly, Win rate this year?"}).json()
     assert body["result"]["value"] == "50.00"
     assert body["summary"].startswith(
         "Sales lead win rate (leads created from 2026-01-01 to 2026-12-31): 50.00%. "
@@ -226,7 +226,7 @@ def test_unavailable_percentage_is_null_with_reason(
     # agent_records has only an open lead, so no win rate can be calculated.
     _install(monkeypatch, {"operation": "lead_win_rate"})
 
-    body = agent_client.post(ASK, json={"question": "What is our win rate?"}).json()
+    body = agent_client.post(ASK, json={"question": "Roughly, What is our win rate?"}).json()
 
     assert body["result"]["value"] is None
     assert body["result"]["unavailable_reason"].startswith("No opportunities")
@@ -247,7 +247,7 @@ def test_time_series_without_grain_defaults_to_monthly_and_others_drop_grain(
     assert body["summary"].endswith("1 meeting, 1 call and 1 follow-up across 1 month with data.")
 
     _install(monkeypatch, {"operation": "leads_by_status", "grain": "daily"})
-    body = agent_client.post(ASK, json={"question": "Leads by status"}).json()
+    body = agent_client.post(ASK, json={"question": "Roughly, Leads by status"}).json()
     assert body["interpretation"]["grain"] is None
 
 
@@ -271,7 +271,7 @@ def test_unsupported_question_returns_no_result(
         {},
         {"question": "  "},
         {"question": "x" * 501},
-        {"question": "Win rate?", "organization_id": 2},
+        {"question": "Roughly, Win rate?", "organization_id": 2},
     ],
 )
 def test_request_validation(
@@ -310,7 +310,7 @@ def test_malformed_model_output_is_rejected_before_execution(
         lambda *args: pytest.fail("Malformed plans must not be executed."),
     )
 
-    response = agent_client.post(ASK, json={"question": "What is our win rate?"})
+    response = agent_client.post(ASK, json={"question": "Roughly, What is our win rate?"})
 
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "malformed_ai_output"
@@ -426,7 +426,7 @@ def test_provider_failures_map_to_errors_and_leave_dashboards_working(
 ) -> None:
     _install(monkeypatch, reply)
 
-    response = agent_client.post(ASK, json={"question": "What is our win rate?"})
+    response = agent_client.post(ASK, json={"question": "Roughly, What is our win rate?"})
 
     assert response.status_code == status
     assert response.json()["error"]["code"] == code
@@ -439,7 +439,7 @@ def test_unconfigured_provider_returns_503(
 ) -> None:
     monkeypatch.setattr(settings, "gemini_api_key", None)
 
-    response = agent_client.post(ASK, json={"question": "What is our win rate?"})
+    response = agent_client.post(ASK, json={"question": "Roughly, What is our win rate?"})
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "llm_not_configured"
@@ -455,7 +455,7 @@ def test_unauthenticated_request_is_rejected_before_the_model(
     if token:
         agent_client.headers["Authorization"] = token
 
-    response = agent_client.post(ASK, json={"question": "What is our win rate?"})
+    response = agent_client.post(ASK, json={"question": "Roughly, What is our win rate?"})
 
     assert response.status_code == 401
     assert model.calls == []
@@ -471,8 +471,8 @@ def test_rate_limit_uses_its_own_bucket(
     model = _install(monkeypatch, {"operation": "new_customers"})
 
     for _ in range(2):
-        assert agent_client.post(ASK, json={"question": "New customers?"}).status_code == 200
-    limited = agent_client.post(ASK, json={"question": "New customers?"})
+        assert agent_client.post(ASK, json={"question": "Roughly, New customers?"}).status_code == 200
+    limited = agent_client.post(ASK, json={"question": "Roughly, New customers?"})
 
     assert limited.status_code == 429
     assert limited.json()["error"]["code"] == "rate_limit_exceeded"
@@ -509,7 +509,7 @@ def test_answers_are_scoped_to_the_callers_organization_and_model_sees_no_crm_da
         ).total_estimated_value
 
     model = _install(monkeypatch, {"operation": "total_lead_value"})
-    body = agent_client.post(ASK, json={"question": "Total pipeline value?"}).json()
+    body = agent_client.post(ASK, json={"question": "Roughly, Total pipeline value?"}).json()
     assert Decimal(body["result"]["value"]) == own_value != Decimal("9999.00")
 
     _install(monkeypatch, {"operation": "customers_by_industry"})
@@ -521,7 +521,7 @@ def test_answers_are_scoped_to_the_callers_organization_and_model_sees_no_crm_da
     assert body["result"]["items"][0]["count"] == 1
 
     system, human = model.calls[0]
-    assert human.content == "Question: Total pipeline value?"
+    assert human.content == "Question: Roughly, Total pipeline value?"
     shown = system.content + human.content
     for secret in ("ABC Trading", "Rival", "Secret product", "9999", "organization"):
         assert secret not in shown
@@ -695,7 +695,7 @@ def test_contradictory_or_impossible_relative_periods_are_rejected(
 ) -> None:
     _install(monkeypatch, {"operation": "new_customers", **plan})
 
-    response = agent_client.post(ASK, json={"question": "New customers?"})
+    response = agent_client.post(ASK, json={"question": "Roughly, New customers?"})
 
     assert response.status_code == status, response.text
     assert response.json()["error"]["code"] == code
@@ -720,9 +720,9 @@ def test_win_rate_summary_states_the_created_date_basis(
         db.commit()
 
     _install(monkeypatch, {"operation": "lead_win_rate", "month": 9})
-    september = agent_client.post(ASK, json={"question": "Win rate in September?"}).json()
+    september = agent_client.post(ASK, json={"question": "Roughly, Win rate in September?"}).json()
     _install(monkeypatch, {"operation": "lead_win_rate", "month": 8})
-    august = agent_client.post(ASK, json={"question": "Win rate in August?"}).json()
+    august = agent_client.post(ASK, json={"question": "Roughly, Win rate in August?"}).json()
 
     assert september["result"]["value"] is None
     assert september["summary"].startswith(
@@ -778,3 +778,25 @@ def test_followups_for_a_past_period_omit_counts_measured_against_today(
     ]
     assert "due_today" not in past["summary"] and "pending" not in past["summary"]
     assert "This period has ended" in past["summary"]
+
+
+def test_analytics_page_serves_the_question_panel(agent_client: TestClient) -> None:
+    page = agent_client.get("/analytics")
+    js = agent_client.get("/static/js/analytics.js").text
+    api_js = agent_client.get("/static/js/api.js").text
+    css = agent_client.get("/static/css/analytics.css").text
+
+    assert page.status_code == 200
+    for element_id in (
+        "ask-form", "ask-question", "ask-submit", "ask-status", "ask-error", "ask-result",
+        "ask-summary", "ask-interpretation", "ask-chart",
+    ):
+        assert f'id="{element_id}"' in page.text
+    assert 'maxlength="500"' in page.text
+    assert "The date filters below do not apply here" in page.text
+    assert 'request("/analytics/ask"' in api_js and 'method: "POST"' in api_js
+    assert "askAnalytics(question)" in js
+    # Question, summary and labels are echoed user/database text: never parsed as HTML.
+    assert "innerHTML" not in js
+    assert "askPending" in js and "askButton.disabled = true" in js
+    assert ".ask-panel" in css

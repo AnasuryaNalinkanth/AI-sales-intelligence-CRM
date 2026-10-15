@@ -60,6 +60,14 @@ meeting.
 **Analytics.** KPIs, distributions, pipeline value by stage, activity trends and follow-up due
 windows. Database queries calculate every number; the model never does arithmetic.
 
+**Ask about your sales data.** The analytics page also takes a plain-language question, such
+as "What was our win rate last month?". The model only picks one of 21 approved, read-only
+reports and the period; the existing analytics queries compute the answer for your
+organisation. The answer shows a summary built from a template, the report and exact dates
+used, and a chart. Relative periods are resolved on the server in UTC: a month named without a
+year is the most recent one that has started, "last week" is the previous Monday–Sunday, and
+"last N days" ends today, inclusive. The dashboard's date filters do not apply to questions.
+
 **AI assistant.** Ask about a customer, prepare for a meeting, or ask what to focus on. You can
 also generate a customer summary or a meeting brief on demand.
 
@@ -200,6 +208,7 @@ precedence. [.env.example](.env.example) lists them all. These are the main ones
 | `CORS_ALLOWED_ORIGINS` | Explicit list of allowed origins |
 | `GEMINI_API_KEY` `GEMINI_MODEL` | Enable the assistant (default model `gemini-2.5-flash`) |
 | `AGENT_ACTION_TTL_SECONDS` | Lifetime of a pending proposal (30–3600 seconds, default 300) |
+| `ANALYTICS_ASK_TIMEOUT_SECONDS` | Total time to interpret one analytics question before a 504 (default 60; local models may need more) |
 | `ALLOW_PUBLIC_REGISTRATION` | Keep `false` until signup creates organisations |
 | `GOOGLE_CLIENT_ID` `GOOGLE_CLIENT_SECRET` `GOOGLE_REDIRECT_URI` `GOOGLE_TOKEN_ENCRYPTION_KEY` | Google Calendar sync; enabled only when all four are set and the key is a valid Fernet key |
 | `SCHEDULING_*` | Business hours, slot increments, default durations and the suggestion window |
@@ -340,9 +349,17 @@ Example registration body:
 | `GET` | `/api/analytics/followups` | Follow-up states and due windows |
 | `GET` | `/api/analytics/attention` | Dashboard "Needs attention" queue |
 | `GET` | `/api/analytics/proactive-insights` | Ranked recommendations: `category`, `urgency`, `min_score`, `customer_id`, `page`, `page_size` |
+| `POST` | `/api/analytics/ask` | Answer a plain-language question (`{"question": "..."}`, 3–500 characters) |
 
-Metric endpoints accept inclusive `start_date` and `end_date` parameters. The customers,
-enquiries and activities endpoints also take `grain` (`daily`, `weekly` or `monthly`).
+Metric endpoints accept inclusive `start_date` and `end_date` parameters between 1900-01-01 and
+2100-12-31. The customers, enquiries and activities endpoints also take `grain` (`daily`,
+`weekly` or `monthly`).
+
+`/api/analytics/ask` returns `status` (`answered` or `unsupported`), a `summary`, the
+`interpretation` it ran (operation, dates, grain, and any relative period) and a `result`
+(`kind`, `value` or `items`, `all_time`, `unavailable_reason`, `note`). It has its own rate-limit
+bucket and returns 422 `invalid_date_range`, 429, 502 `malformed_ai_output`, 503 or 504
+`llm_timeout` with a message suitable for display.
 
 **How a recommendation is scored.** Urgency combines overdue time, inactivity and an imminent
 meeting. Impact combines enquiry priority, sales stage and estimated value. The priority score
@@ -418,6 +435,20 @@ dictionary in
   activity is measured from its creation date. They suggest priorities; they don't predict
   outcomes.
 - **No screenshots or hosted demo** yet. Run it locally to see the interface.
+
+### Known issues (for a later hardening phase)
+
+- **Agent chat with local Ollama** (`qwen3.5:4b`) sometimes fails with `httpx.ReadTimeout`,
+  meaning Ollama sent nothing for longer than `OLLAMA_TIMEOUT_SECONDS`. Not yet investigated.
+- **Slow local models and analytics questions.** Interpreting one question with local Ollama
+  took 13–226 seconds in testing, so many questions end in a 504 at the default 60-second
+  limit. Raise `ANALYTICS_ASK_TIMEOUT_SECONDS` for local use.
+- **Analytics question periods.** Only a bare month, "last week" and "last N days" are resolved
+  on the server. Other relative periods ("last month", a quarter without a year) are computed
+  by the model from today's UTC date and are not checked. "Today" is UTC, so near midnight a
+  user in another timezone may see the previous or next day.
+- **Gemini** structured output and request cancellation for analytics questions have only been
+  tested with mocks, not against the live API.
 
 ## Project layout
 

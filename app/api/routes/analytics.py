@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session
 
 from app.core.rate_limit import enforce_analytics_ask_rate_limit
@@ -26,12 +26,14 @@ from app.schemas.intelligence import (
     InsightCategory,
     InsightLevel,
     ProactiveInsights,
+    RecommendationProposal,
 )
 from app.services import (
     analytics_query_service,
     analytics_service,
     intelligence_service,
     proactive_insights_service,
+    recommendation_proposal_service,
 )
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
@@ -171,6 +173,26 @@ def get_proactive_insights(
         customer_id=customer_id,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.post(
+    "/proactive-insights/{recommendation_id}/proposal",
+    response_model=RecommendationProposal,
+    summary="Ask the AI to explain a recommendation and draft one existing action; writes nothing",
+    dependencies=[Depends(enforce_analytics_ask_rate_limit)],
+)
+async def propose_recommendation_action(
+    recommendation_id: str = Path(max_length=40),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> RecommendationProposal:
+    # Async so a slow model call waits on the event loop instead of holding a worker thread.
+    return await recommendation_proposal_service.propose(
+        db,
+        recommendation_id,
+        organization_id=current_user.organization_id,
+        now=datetime.now(timezone.utc),
     )
 
 

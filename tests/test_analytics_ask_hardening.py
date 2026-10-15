@@ -113,7 +113,7 @@ def test_valid_output_on_the_real_parsing_path_is_answered(
 ) -> None:
     PROVIDERS[provider](monkeypatch, '{"operation": "new_customers", "start_date": "2026-01-01"}')
 
-    response = agent_client.post(ASK, json={"question": "New customers this year?"})
+    response = agent_client.post(ASK, json={"question": "Roughly, New customers this year?"})
 
     assert response.status_code == 200, response.text
     assert response.json()["interpretation"]["operation"] == "new_customers"
@@ -136,7 +136,7 @@ def test_genuine_provider_errors_keep_their_classification(
 ) -> None:
     _ollama_replies(monkeypatch, error=error)
 
-    response = agent_client.post(ASK, json={"question": "New customers this year?"})
+    response = agent_client.post(ASK, json={"question": "Roughly, New customers this year?"})
 
     assert response.status_code == status
     assert response.json()["error"]["code"] == code
@@ -152,7 +152,7 @@ def test_gemini_quota_error_is_still_a_quota_error(
 
     _gemini_replies(monkeypatch, error=ResourceExhausted("429 RESOURCE_EXHAUSTED"))
 
-    response = agent_client.post(ASK, json={"question": "New customers this year?"})
+    response = agent_client.post(ASK, json={"question": "Roughly, New customers this year?"})
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "llm_quota_exceeded"
@@ -205,11 +205,11 @@ def test_overall_deadline_returns_504_and_cancels_the_model_call(
     agent_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model = SlowModel()
-    monkeypatch.setattr(analytics_query_service, "create_chat_model", lambda: model)
+    monkeypatch.setattr(analytics_query_service, "create_chat_model", lambda **_: model)
     monkeypatch.setattr(settings, "analytics_ask_timeout_seconds", 0.2)
 
     started = time.perf_counter()
-    response = agent_client.post(ASK, json={"question": "New customers this year?"})
+    response = agent_client.post(ASK, json={"question": "Roughly, New customers this year?"})
 
     assert time.perf_counter() - started < 5
     assert response.status_code == 504
@@ -269,7 +269,7 @@ def test_deadline_closes_a_streaming_ollama_connection(
     monkeypatch.setattr(settings, "ollama_base_url", endless_ollama)
     monkeypatch.setattr(settings, "analytics_ask_timeout_seconds", 1.0)
 
-    response = agent_client.post(ASK, json={"question": "New customers this year?"})
+    response = agent_client.post(ASK, json={"question": "Roughly, New customers this year?"})
 
     assert response.status_code == 504
     assert _EndlessOllama.disconnected.wait(5), "the provider connection was left open"
@@ -307,7 +307,7 @@ def test_no_transaction_is_held_during_inference_and_execution_leaves_the_event_
             off_loop.append(True)
         return real_execute(*args)
 
-    monkeypatch.setattr(analytics_query_service, "create_chat_model", lambda: ProbeModel())
+    monkeypatch.setattr(analytics_query_service, "create_chat_model", lambda **_: ProbeModel())
     monkeypatch.setattr(analytics_query_service, "_execute", probe_execute)
 
     response = agent_client.post(ASK, json={"question": "How many customers?"})

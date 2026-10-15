@@ -26,6 +26,25 @@
           <p>Metrics calculated from customer, sales lead, activity and follow-up records. Leave the dates empty to include all records.</p>
         </div>
       </div>
+      <section id="ask" class="ask-panel" aria-labelledby="ask-heading">
+        <div>
+          <h2 id="ask-heading">Ask about your sales data</h2>
+          <p class="insights-note">An AI model chooses one approved, read-only report and its period; the figures come from your CRM records. The date filters below do not apply here. Answers can take a while, and a slow model may time out. If that happens, you can ask again.</p>
+        </div>
+        <form id="ask-form" class="ask-form" novalidate>
+          <label class="field ask-field">Question
+            <input id="ask-question" name="question" type="text" maxlength="500" autocomplete="off" placeholder="What was our win rate last month?" aria-describedby="ask-error">
+          </label>
+          <button id="ask-submit" class="button button-primary" type="submit">Ask</button>
+        </form>
+        <p id="ask-status" class="analytics-status" role="status" aria-live="polite" hidden></p>
+        <p id="ask-error" class="analytics-error" role="alert" hidden></p>
+        <div id="ask-result" class="ask-result" aria-live="polite" hidden>
+          <p id="ask-summary" class="ask-summary"></p>
+          <p id="ask-interpretation" class="ask-meta"></p>
+          <div id="ask-chart" class="analytics-chart"></div>
+        </div>
+      </section>
       <section id="insights" class="insights-panel" aria-labelledby="insights-heading">
         <div class="insights-header">
           <div>

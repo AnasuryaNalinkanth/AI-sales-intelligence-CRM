@@ -65,6 +65,8 @@ def test_ollama_provider_constructor_args_without_gemini_key(
         "model": "qwen-test",
         "base_url": "http://ollama.test:11434",
         "num_ctx": 8192,
+        "reasoning": None,
+        "num_predict": None,
         "client_kwargs": {"timeout": 45.0},
     }
 

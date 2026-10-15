@@ -73,7 +73,13 @@ def map_ai_provider_exception(
     )
 
 
-def create_chat_model():
+def create_chat_model(*, reasoning: bool | None = None, max_output_tokens: int | None = None):
+    """reasoning=False turns off an Ollama model's thinking; None keeps the model default.
+    max_output_tokens caps an Ollama reply (num_predict); None leaves it unlimited.
+
+    Only Ollama uses them. Gemini keeps its defaults: its thinking tokens count toward its
+    output limit, so a cap there could truncate valid answers, and that is untested here.
+    """
     if settings.ai_provider == "ollama":
         from langchain_ollama import ChatOllama
 
@@ -81,6 +87,8 @@ def create_chat_model():
             model=settings.ollama_model,
             base_url=settings.ollama_base_url,
             num_ctx=settings.ollama_num_ctx,
+            reasoning=reasoning,
+            num_predict=max_output_tokens,
             client_kwargs={"timeout": settings.ollama_timeout_seconds},
         )
 

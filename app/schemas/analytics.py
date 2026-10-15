@@ -143,7 +143,7 @@ AnalyticsOperation = Literal[
     "followup_summary",
 ]
 AnalyticsResultKind = Literal[
-    "number", "percent", "amount", "distribution", "time_series", "activity_series"
+    "number", "percent", "amount", "distribution", "time_series", "activity_series", "overview"
 ]
 
 
@@ -165,7 +165,8 @@ class AnalyticsQueryPlan(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    operation: Literal[AnalyticsOperation, "unsupported"]
+    # sales_overview runs several approved operations for one period (see the query service).
+    operation: Literal[AnalyticsOperation, "sales_overview", "unsupported"]
     start_date: date | None = None
     end_date: date | None = None
     grain: TimeGrain | None = None
@@ -184,6 +185,17 @@ class AnalyticsAskResult(BaseModel):
     # True when the figure covers all records and ignores the requested dates.
     all_time: bool = False
     note: str | None = None
+    # Set only for kind "overview": one result per approved operation, each with its own label.
+    sections: list["AnalyticsOverviewSection"] | None = None
+
+
+class AnalyticsOverviewSection(BaseModel):
+    operation: AnalyticsOperation
+    result: AnalyticsAskResult
+    summary: str
+
+
+AnalyticsAskResult.model_rebuild()
 
 
 class AnalyticsAskTimings(BaseModel):

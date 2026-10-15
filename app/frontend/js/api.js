@@ -365,6 +365,20 @@ export function getAnalytics(metric, params = {}) {
   return request(`/analytics/${encodeURIComponent(metric)}${suffix}`);
 }
 
+// Explanation and a draft action only; nothing is written until the draft is submitted as a task.
+export function proposeRecommendationAction(recommendationId) {
+  return request(`/analytics/proactive-insights/${encodeURIComponent(recommendationId)}/proposal`, {
+    method: "POST",
+  });
+}
+
+export function askAnalytics(question) {
+  return request("/analytics/ask", {
+    method: "POST",
+    body: JSON.stringify({ question }),
+  });
+}
+
 // Sales leads keep the /enquiries API paths for compatibility.
 export function getLeads(params = {}) {
   const query = new URLSearchParams();

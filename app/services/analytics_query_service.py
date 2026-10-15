@@ -12,11 +12,12 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import inspect
 import logging
+import re
 import time
 from typing import get_args, get_type_hints
 
 from langchain_core.language_models import BaseChatModel
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -31,6 +32,7 @@ from app.schemas.analytics import (
     AnalyticsAskResult,
     AnalyticsAskTimings,
     AnalyticsOperation,
+    AnalyticsOverviewSection,
     AnalyticsQueryPlan,
     AnalyticsResultKind,
     CountTimePoint,
@@ -48,6 +50,7 @@ UNSUPPORTED_SUMMARY = (
     "30 days."
 )
 GRAIN_UNITS = {"daily": "day", "weekly": "week", "monthly": "month"}
+PLAN_MAX_OUTPUT_TOKENS = 256
 
 
 @dataclass(frozen=True)
@@ -268,6 +271,24 @@ OPERATIONS: dict[str, AnalyticsOperationSpec] = {
     ),
 }
 
+SALES_OVERVIEW = "sales_overview"
+# A broad overview: these approved operations, in this order, for one period.
+OVERVIEW_OPERATIONS = (
+    "leads_created_over_time",
+    "leads_by_status",
+    "leads_by_priority",
+    "total_lead_value",
+    "lead_win_rate",
+    "new_customers",
+    "activity_over_time",
+)
+OVERVIEW_DESCRIPTION = (
+    "A broad overview of sales performance for one period: sales leads created, leads by "
+    "status and priority, total estimated lead value, win rate, new customers, and meetings, "
+    "calls and follow-ups. Use it for general questions about how sales are going; a "
+    "question about one metric, such as the win rate, uses that metric's operation."
+)
+
 
 def _check_registry() -> None:
     # Runs at import, so the schema enum, this registry and the selected fields cannot drift apart.
@@ -288,9 +309,10 @@ def _check_registry() -> None:
             raise RuntimeError(f"Analytics operation {name} has current_fields it does not select.")
         if not spec.all_time and not spec.basis:
             raise RuntimeError(f"Analytics operation {name} needs a basis for its summary.")
-
-
-_check_registry()
+    if not set(OVERVIEW_OPERATIONS) <= set(OPERATIONS):
+        raise RuntimeError("The sales overview names unapproved operations.")
+    if unknown := {operation for _, operation in _METRICS} - {*OPERATIONS, SALES_OVERVIEW}:
+        raise RuntimeError(f"Rule-based routing names unapproved operations: {unknown}")
 
 
 def _utc_today() -> date:
@@ -298,8 +320,121 @@ def _utc_today() -> date:
 
 
 def _system_prompt(today: date) -> str:
-    catalog = "\n".join(f"- {name}: {spec.description}" for name, spec in OPERATIONS.items())
+    catalog = "\n".join(
+        [f"- {name}: {spec.description}" for name, spec in OPERATIONS.items()]
+        + [f"- {SALES_OVERVIEW}: {OVERVIEW_DESCRIPTION}"]
+    )
     return ANALYTICS_QUERY_SYSTEM_PROMPT.format(today=today.isoformat(), operations=catalog)
+
+
+# ---------- Rule-based interpretation of common, unambiguous questions ----------
+# A question is routed here only when the whole of it is one known metric phrase plus an
+# optional known period; any other word sends it to the model, so no filter is ever dropped.
+
+_PREFIX = re.compile(
+    r"^(?:(?:please|what(?:'s| is| was| are| were)|show(?: me)?|give me|tell me|how many|"
+    r"how much|number of|count of|our|the|my)\s+)*"
+)
+_METRICS = (  # Checked in order; the first that matches the start of the question wins.
+    (re.compile(r"(?:sales )?leads? by (?:status|stage)"), "leads_by_status"),
+    (re.compile(r"(?:sales )?leads? by priority"), "leads_by_priority"),
+    (re.compile(r"(?:(?:sales )?lead )?win[ -]?rate"), "lead_win_rate"),
+    (
+        re.compile(
+            r"new customers(?: (?:did we|have we) (?:get|add|sign|win))?"
+            r"(?: (?:were|have been) (?:added|created))?"
+        ),
+        "new_customers",
+    ),
+    (re.compile(r"total (?:estimated )?(?:sales )?(?:lead|pipeline) value"), "total_lead_value"),
+    (
+        re.compile(r"(?:new )?(?:sales )?leads(?: (?:were|have been) created| created| did we get)?"),
+        "leads_created_over_time",
+    ),
+    (
+        re.compile(
+            r"(?:an? )?(?:(?:overview|summary) of (?:our |the |my )?sales(?: performance)?"
+            r"|sales(?: performance)? (?:overview|summary)|sales performance|overview)"
+        ),
+        SALES_OVERVIEW,
+    ),
+)
+_MONTHS = {
+    name.lower(): number
+    for number in range(1, 13)
+    for name in (calendar.month_name[number], calendar.month_abbr[number])
+}
+_YEAR = r"(19\d\d|20\d\d|2100)"
+
+
+def _month_bounds(year: int, month: int) -> dict[str, date]:
+    return {
+        "start_date": date(year, month, 1),
+        "end_date": date(year, month, calendar.monthrange(year, month)[1]),
+    }
+
+
+def _period_fields(text: str, today: date) -> dict[str, object] | None:
+    """Plan fields for a known period phrase; None when the phrase is not recognised."""
+    text = re.sub(r"^(?:in|for|during|over|from) ", "", text)
+    quarter = (today.month - 1) // 3
+    if text in ("", "all time", "ever"):
+        return {}
+    if text in ("today", "yesterday"):
+        day = today - timedelta(days=0 if text == "today" else 1)
+        return {"start_date": day, "end_date": day}
+    if text == "this month":
+        return _month_bounds(today.year, today.month)
+    if text == "last month":
+        last = today.replace(day=1) - timedelta(days=1)
+        return _month_bounds(last.year, last.month)
+    if text in ("this year", "last year"):
+        year = today.year - (text == "last year")
+        return {"start_date": date(year, 1, 1), "end_date": date(year, 12, 31)}
+    if text in ("this quarter", "last quarter"):
+        year, quarter = divmod(today.year * 4 + quarter - (text == "last quarter"), 4)
+        return {
+            "start_date": date(year, 3 * quarter + 1, 1),
+            "end_date": _month_bounds(year, 3 * quarter + 3)["end_date"],
+        }
+    if text in ("last week", "previous week", "the previous week"):
+        return {"last_week": True}
+    if match := re.fullmatch(r"(?:the )?(?:last|past) (\d{1,6}) days?", text):
+        return {"last_n_days": int(match[1])}
+    if text in _MONTHS:
+        return {"month": _MONTHS[text]}
+    if (match := re.fullmatch(rf"([a-z]+) {_YEAR}", text)) and match[1] in _MONTHS:
+        return _month_bounds(int(match[2]), _MONTHS[match[1]])
+    if match := re.fullmatch(_YEAR, text):
+        return {"start_date": date(int(match[1]), 1, 1), "end_date": date(int(match[1]), 12, 31)}
+    if match := re.fullmatch(rf"q([1-4]) {_YEAR}", text):
+        quarter, year = int(match[1]) - 1, int(match[2])
+        return {
+            "start_date": date(year, 3 * quarter + 1, 1),
+            "end_date": _month_bounds(year, 3 * quarter + 3)["end_date"],
+        }
+    return None
+
+
+_check_registry()
+
+
+def _rule_based_plan(question: str, today: date) -> AnalyticsQueryPlan | None:
+    """A plan for an unambiguous common question, or None to ask the model."""
+    text = re.sub(r"\s+", " ", question.lower().replace("’", "'")).strip(" ?.!")
+    text = _PREFIX.sub("", text)
+    for pattern, operation in _METRICS:
+        if (match := pattern.match(text)) is None:
+            continue
+        rest = text[match.end():].strip()
+        fields = _period_fields(rest, today)
+        if fields is None:
+            return None
+        try:
+            return AnalyticsQueryPlan(operation=operation, **fields)
+        except ValidationError:  # e.g. "last 0 days": let the model and its checks handle it
+            return None
+    return None
 
 
 def _resolve_period(plan: AnalyticsQueryPlan, today: date) -> AnalyticsQueryPlan:
@@ -340,10 +475,19 @@ def _execute(
     organization_id: int,
     today: date,
 ) -> AnalyticsAskResult:
+    return _select(spec, plan, _fetch(db, spec, plan, organization_id), today)
+
+
+def _fetch(
+    db: Session, spec: AnalyticsOperationSpec, plan: AnalyticsQueryPlan, organization_id: int
+) -> BaseModel:
     grain = {"grain": plan.grain} if spec.uses_grain else {}
-    response = spec.fetch(
-        db, plan.start_date, plan.end_date, organization_id=organization_id, **grain
-    )
+    return spec.fetch(db, plan.start_date, plan.end_date, organization_id=organization_id, **grain)
+
+
+def _select(
+    spec: AnalyticsOperationSpec, plan: AnalyticsQueryPlan, response: BaseModel, today: date
+) -> AnalyticsAskResult:
     period_ended = plan.end_date is not None and plan.end_date < today
     fields = tuple(
         field for field in spec.fields if not (period_ended and field in spec.current_fields)
@@ -366,18 +510,21 @@ def _execute(
     )
 
 
+def _period_text(plan: AnalyticsQueryPlan) -> str | None:
+    if plan.start_date and plan.end_date:
+        return f"from {plan.start_date} to {plan.end_date}"
+    if plan.start_date:
+        return f"since {plan.start_date}"
+    if plan.end_date:
+        return f"up to {plan.end_date}"
+    return None
+
+
 def _heading(spec: AnalyticsOperationSpec, plan: AnalyticsQueryPlan) -> str:
     if spec.all_time:
         return spec.label
-    if plan.start_date and plan.end_date:
-        period = f"from {plan.start_date} to {plan.end_date}"
-    elif plan.start_date:
-        period = f"since {plan.start_date}"
-    elif plan.end_date:
-        period = f"up to {plan.end_date}"
-    else:
-        return f"{spec.label} (all records)"
-    return f"{spec.label} ({spec.basis} {period})"
+    period = _period_text(plan)
+    return f"{spec.label} ({spec.basis} {period})" if period else f"{spec.label} (all records)"
 
 
 def _count(number: int, noun: str) -> str:
@@ -428,19 +575,47 @@ def _summary(
     return f"{text} {result.note}" if result.note else text
 
 
-async def ask(
-    db: Session,
-    question: str,
-    *,
-    organization_id: int,
-    model: BaseChatModel | None = None,
-) -> AnalyticsAskResponse:
-    # organization_id is already a plain int; closing returns the pooled connection so no
-    # transaction stays open during inference. The session reconnects for _execute.
-    await run_in_threadpool(db.close)
-    today = _utc_today()  # One reference date for the prompt, relative periods and summaries.
-    started = time.perf_counter()
-    chat_model = model or await run_in_threadpool(create_chat_model)
+def _execute_overview(
+    db: Session, plan: AnalyticsQueryPlan, organization_id: int, today: date
+) -> AnalyticsAskResult:
+    # Sections sharing a service share one call: every section uses the monthly grain,
+    # which is also each service's default, so one response serves them all.
+    responses: dict[Callable[..., BaseModel], BaseModel] = {}
+    sections = []
+    for operation in OVERVIEW_OPERATIONS:
+        spec = OPERATIONS[operation]
+        part = plan.model_copy(
+            update={"operation": operation, "grain": "monthly" if spec.uses_grain else None}
+        )
+        if spec.fetch not in responses:
+            responses[spec.fetch] = _fetch(db, spec, part, organization_id)
+        result = _select(spec, part, responses[spec.fetch], today)
+        sections.append(
+            AnalyticsOverviewSection(
+                operation=operation, result=result, summary=_summary(spec, part, result)
+            )
+        )
+    return AnalyticsAskResult(kind="overview", sections=sections)
+
+
+def _overview_summary(plan: AnalyticsQueryPlan) -> str:
+    return (
+        f"Sales overview ({_period_text(plan) or 'all records'}): "
+        f"{len(OVERVIEW_OPERATIONS)} approved metrics, each with its own dates and "
+        "calculation. No earlier period is compared, so no growth or decline is stated."
+    )
+
+
+async def _interpret_with_model(
+    question: str, today: date, model: BaseChatModel | None
+) -> AnalyticsQueryPlan:
+    # Thinking off: picking one operation needs no reasoning trace. Measured locally on
+    # qwen3.5:4b, it cut a plan from 15-110 s and 600-4600 output tokens to under 2 s.
+    # A plan is under 100 tokens (53 measured); the cap turns a runaway JSON loop into a
+    # fast malformed_ai_output instead of a 504 at the deadline.
+    chat_model = model or await run_in_threadpool(
+        lambda: create_chat_model(reasoning=False, max_output_tokens=PLAN_MAX_OUTPUT_TOKENS)
+    )
     try:
         # wait_for cancels the provider coroutine and waits for that cancellation to finish,
         # which closes its HTTP connection before the 504 is returned.
@@ -464,6 +639,25 @@ async def ask(
         ) from None
     if not isinstance(plan, AnalyticsQueryPlan):
         plan = AnalyticsQueryPlan.model_validate(plan)
+    return plan
+
+
+async def ask(
+    db: Session,
+    question: str,
+    *,
+    organization_id: int,
+    model: BaseChatModel | None = None,
+) -> AnalyticsAskResponse:
+    # organization_id is already a plain int; closing returns the pooled connection so no
+    # transaction stays open during inference. The session reconnects for _execute.
+    await run_in_threadpool(db.close)
+    today = _utc_today()  # One reference date for the prompt, relative periods and summaries.
+    started = time.perf_counter()
+    plan = _rule_based_plan(question, today)
+    source = "rules" if plan else "model"
+    if plan is None:
+        plan = await _interpret_with_model(question, today, model)
     interpreted = time.perf_counter()
 
     result: AnalyticsAskResult | None = None
@@ -479,12 +673,19 @@ async def ask(
                 code="invalid_date_range",
                 details={"interpretation": plan.model_dump(mode="json")},
             )
-        spec = OPERATIONS[plan.operation]
-        plan = plan.model_copy(
-            update={"grain": (plan.grain or "monthly") if spec.uses_grain else None}
-        )
-        result = await run_in_threadpool(_execute, db, spec, plan, organization_id, today)
-        summary = _summary(spec, plan, result)
+        if plan.operation == SALES_OVERVIEW:
+            plan = plan.model_copy(update={"grain": None})  # each section sets its own
+            result = await run_in_threadpool(
+                _execute_overview, db, plan, organization_id, today
+            )
+            summary = _overview_summary(plan)
+        else:
+            spec = OPERATIONS[plan.operation]
+            plan = plan.model_copy(
+                update={"grain": (plan.grain or "monthly") if spec.uses_grain else None}
+            )
+            result = await run_in_threadpool(_execute, db, spec, plan, organization_id, today)
+            summary = _summary(spec, plan, result)
     finished = time.perf_counter()
 
     timings = AnalyticsAskTimings(
@@ -493,7 +694,8 @@ async def ask(
     )
     # The question itself is not logged; it may contain customer details.
     logger.info(
-        "Analytics question answered [operation=%s interpret_ms=%d execute_ms=%d]",
+        "Analytics question answered [source=%s operation=%s interpret_ms=%d execute_ms=%d]",
+        source,
         plan.operation,
         timings.interpret,
         timings.execute,

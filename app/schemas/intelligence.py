@@ -1,8 +1,10 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.schemas.agent import AgentActionMode
 
 AttentionReasonCode = Literal[
     "overdue_followup",
@@ -135,3 +137,43 @@ class ProactiveInsights(BaseModel):
     page: int
     page_size: int
     items: list[ProactiveInsight]
+
+
+# Existing task actions a recommendation may propose; see recommendation_proposal_service.
+RecommendationActionName = Literal[
+    "complete_followup", "create_followup", "schedule_call", "create_meeting"
+]
+
+
+class RecommendationDraft(BaseModel):
+    """The only output the model may produce for a recommendation.
+
+    It holds no IDs, dates, scores or policy: the server adds the recommendation's IDs, the
+    user supplies dates and times, and values may only carry the chosen action's text fields.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    explanation: str = Field(min_length=1, max_length=600)
+    next_step: str = Field(min_length=1, max_length=300)
+    action: RecommendationActionName | None = None
+    values: dict[str, str] = Field(default_factory=dict)
+
+
+class RecommendationProposedAction(BaseModel):
+    action: RecommendationActionName
+    # The recommendation's IDs plus the model's text; the task API re-validates all of it.
+    values: dict[str, Any]
+    user_must_provide: list[str]
+    # Task field the browser fills with the user's own timezone, if any.
+    timezone_field: str | None = None
+    # The organization's current policy, for display only; the task API enforces it again
+    # when the task is created and when the action is confirmed.
+    policy: AgentActionMode
+
+
+class RecommendationProposal(BaseModel):
+    recommendation_id: str
+    explanation: str
+    next_step: str
+    proposed_action: RecommendationProposedAction | None
